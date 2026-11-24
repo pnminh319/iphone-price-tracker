@@ -1,69 +1,89 @@
 
-name: Update iPhone Prices V3
+name: Update iPhone Prices
 
 on:
-  workflow_dispatch:
-
   schedule:
-    - cron: '17 */3 * * *'
+    - cron: '0 */3 * * *'
+
+  workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
-  group: iphone-price-update
+  group: iphone-price-tracker
   cancel-in-progress: false
 
 jobs:
-  crawl:
+  update-prices:
+
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+
+    timeout-minutes: 120
 
     env:
       GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
       SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+      TZ: Asia/Ho_Chi_Minh
+      PYTHONUNBUFFERED: "1"
 
     steps:
+
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install libraries
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install playwright
 
       - name: Install Chromium
-        run: python -m playwright install --with-deps chromium
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Check crawler version
+        run: |
+          echo "=============================="
+          echo "CHECKING CRAWLER VERSION"
+          git rev-parse HEAD
+          grep -n "VERSION" crawler/main.py || true
+          if grep -q "INVALID_HEADERS" crawler/main.py; then
+            echo "ERROR: OLD MAIN.PY DETECTED"
+            exit 1
+          fi
+          grep -F 'VERSION = "V4.1"' crawler/main.py
+          echo "=============================="
 
       - name: Discover iPhone products
-        run: python crawler/discover.py
+        run: |
+          python crawler/discover.py
 
       - name: Update iPhone prices
-        continue-on-error: true
-        run: python crawler/main.py
+        run: |
+          python crawler/main.py
 
-      - name: Export Dashboard data
-        run: python crawler/export_dashboard.py
+      - name: Export dashboard data
+        run: |
+          python crawler/export_dashboard.py
 
-      - name: Upload website
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs
+      - name: Commit dashboard data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-  deploy:
-    needs: crawl
-    runs-on: ubuntu-latest
+          git add docs/data.json
 
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Deploy Dashboard
-        id: deployment
-        uses: actions/deploy-pages@v4
+          if git diff --cached --quiet; then
+            echo "No data changes"
+          else
+            git commit -m "Auto update iPhone prices"
+            git push origin main
+          fi
