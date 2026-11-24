@@ -1,14 +1,12 @@
 
-/* iPhone Price Tracker V5
-   Value Score Engine
-*/
-
 (function () {
+
     "use strict";
 
-    const VERSION = "5.0";
+    const VERSION = "V5.3";
 
     const PROFILES = {
+
         balanced: {
             performance: 25,
             camera: 20,
@@ -40,352 +38,327 @@
             display: 10,
             longevity: 35
         }
+
     };
 
-    function number(value) {
-        if (
-            value === null ||
-            value === undefined ||
-            value === ""
-        ) return null;
-
-        const n = Number(value);
-
-        return Number.isFinite(n) ? n : null;
-    }
-
-    function clamp(value, min = 0, max = 100) {
-        return Math.max(min, Math.min(max, value));
-    }
-
-    function round(value) {
-        return Math.round(value * 10) / 10;
-    }
-
-    function normalizeModel(model) {
-        return String(model || "")
-            .toLowerCase()
+    const normalize = value =>
+        String(value ?? "")
             .trim()
-            .replace(/\s+/g, " ");
-    }
+            .toLowerCase();
 
-    function normalizeStorage(storage) {
-        return String(storage || "")
-            .toUpperCase()
-            .replace(/\s+/g, "");
-    }
+    const clamp = value =>
+        Math.max(0, Math.min(100, value));
 
-    function normalizeColor(color) {
-        return String(color || "")
-            .toLowerCase()
-            .trim();
-    }
+    const round = value =>
+        Math.round(value * 100) / 100;
 
-    function groupKey(product) {
-        return [
-            normalizeModel(product.model),
-            normalizeStorage(product.storage),
-            normalizeColor(product.color)
-        ].join("|");
-    }
+    function getSegment(price) {
 
-    // =====================================
-    // QUALITY SCORE
-    // =====================================
+        price = Number(price);
+
+        if (!(price > 0)) return "UNKNOWN";
+        if (price < 10000000) return "Dưới 10 triệu";
+        if (price < 15000000) return "10–15 triệu";
+        if (price < 20000000) return "15–20 triệu";
+        if (price < 25000000) return "20–25 triệu";
+        if (price < 30000000) return "25–30 triệu";
+        if (price < 40000000) return "30–40 triệu";
+
+        return "Từ 40 triệu";
+
+    }
 
     function qualityScore(
+        model,
         specs,
         profile = "balanced"
     ) {
-        if (!specs) return null;
+
+        const database = specs.models || specs;
+
+        const item = database[
+            normalize(model)
+        ];
+
+        if (!item) return null;
 
         const weights =
-            PROFILES[profile] || PROFILES.balanced;
+            PROFILES[profile] ||
+            PROFILES.balanced;
 
-        let score = 0;
+        let total = 0;
 
-        for (const [key, weight] of
-            Object.entries(weights)) {
+        for (const key of Object.keys(weights)) {
 
-            const value = number(specs[key]);
+            const value = Number(item[key]);
 
             if (
-                value === null ||
+                item[key] == null ||
+                !Number.isFinite(value) ||
                 value < 0 ||
                 value > 100
             ) {
                 return null;
             }
 
-            score += value * weight / 100;
+            total += value * weights[key];
+
         }
 
-        return round(score);
-    }
+        return round(total / 100);
 
-    // =====================================
-    // VALUE PER MILLION VND
-    // =====================================
+    }
 
     function valueRatio(quality, price) {
-        const q = number(quality);
-        const p = number(price);
 
         if (
-            q === null ||
-            p === null ||
-            p <= 0
+            quality == null ||
+            !(Number(price) > 0)
         ) return null;
 
-        return q / (p / 1000000);
+        return round(
+            quality / (Number(price) / 1000000)
+        );
+
     }
 
-    // =====================================
-    // MEDIAN MARKET PRICE
-    // =====================================
+    function isFresh(row, hours = 12) {
+
+        const timestamp = Date.parse(
+            row.timestamp
+        );
+
+        const age = Date.now() - timestamp;
+
+        const stock = normalize(
+            row.stock
+        ).replaceAll("_", "");
+
+        return (
+            ["instock", "available"].includes(stock) &&
+            Number(row.price) > 0 &&
+            Number.isFinite(age) &&
+            age >= 0 &&
+            age <= hours * 3600000
+        );
+
+    }
 
     function median(values) {
-        const sorted = values
-            .map(number)
-            .filter(v => v !== null && v > 0)
-            .sort((a, b) => a - b);
 
-        if (!sorted.length) return null;
+        if (!values.length) return null;
 
-        const mid = Math.floor(sorted.length / 2);
+        const sorted = [...values].sort(
+            (a, b) => a - b
+        );
+
+        const mid = Math.floor(
+            sorted.length / 2
+        );
 
         return sorted.length % 2
             ? sorted[mid]
             : (sorted[mid - 1] + sorted[mid]) / 2;
+
     }
 
-    // =====================================
-    // DEAL SCORE
-    // 50 = market median
-    // =====================================
+    function groupKey(row) {
 
-    function dealScore(price, marketPrice) {
-        const p = number(price);
-        const m = number(marketPrice);
+        return [
+            row.model,
+            row.storage,
+            row.color || "UNKNOWN"
+        ].map(normalize).join("|");
+
+    }
+
+    function dealScore(price, marketMedian) {
 
         if (
-            p === null ||
-            m === null ||
-            p <= 0 ||
-            m <= 0
+            !(price > 0) ||
+            !(marketMedian > 0)
         ) return null;
 
-        const difference = (m - p) / m;
+        return round(clamp(
+            50 +
+            (marketMedian - price)
+            / marketMedian * 250
+        ));
 
-        return round(
-            clamp(50 + difference * 250)
+    }
+
+    function advertisedDiscount(row) {
+
+        const price = Number(row.price);
+
+        const original = Number(
+            row.original_price
         );
-    }
 
-    // =====================================
-    // ADVERTISED DISCOUNT
-    // =====================================
-
-    function advertisedDiscount(price, original) {
-        const p = number(price);
-        const o = number(original);
-
-        if (
-            p === null ||
-            o === null ||
-            p <= 0 ||
-            o <= p
-        ) return null;
-
-        return {
-            percent: round((o - p) / o * 100),
-            saving: o - p
-        };
-    }
-
-    // =====================================
-    // STOCK AND FRESHNESS
-    // =====================================
-
-    function eligible(product, maxAgeHours) {
-        const stock = String(
-            product.stock || ""
-        ).toUpperCase();
-
-        if (![
-            "IN_STOCK",
-            "INSTOCK",
-            "AVAILABLE"
-        ].includes(stock)) {
-            return false;
+        if (!(original > price && price > 0)) {
+            return null;
         }
 
-        const time = Date.parse(product.timestamp);
+        return round(
+            (original - price)
+            / original * 100
+        );
 
-        if (!Number.isFinite(time)) return false;
-
-        const age = (Date.now() - time) / 3600000;
-
-        return age >= 0 && age <= maxAgeHours;
     }
 
-    // =====================================
-    // RANK PRODUCTS
-    // =====================================
-
     function rankProducts(
-        products,
+        rows,
         specs,
         options = {}
     ) {
-        const {
-            profile = "balanced",
-            minPrice = 0,
-            maxPrice = Infinity,
-            maxAgeHours = 12
-        } = options;
 
-        const market = new Map();
+        const profile =
+            options.profile || "balanced";
 
-        const validProducts = products.filter(p =>
-            eligible(p, maxAgeHours) &&
-            number(p.price) > 0
+        const budget =
+            Number(options.budget) || Infinity;
+
+        const eligible = rows.filter(row =>
+            isFresh(row) &&
+            Number(row.price) <= budget
         );
 
-        // Group identical variants.
-        for (const product of validProducts) {
-            const key = groupKey(product);
+        const groups = new Map();
 
-            if (!market.has(key)) {
-                market.set(key, new Map());
+        for (const row of rows.filter(r => isFresh(r))) {
+
+            const key = groupKey(row);
+
+            if (!groups.has(key)) {
+                groups.set(key, new Map());
             }
 
-            const retailers = market.get(key);
+            const shops = groups.get(key);
 
-            const retailer = String(
-                product.retailer || ""
-            ).toUpperCase();
+            const price = Number(row.price);
 
-            const previous = retailers.get(retailer);
+            const previous = shops.get(
+                row.retailer
+            );
 
             if (
-                !previous ||
-                Date.parse(product.timestamp) >
-                Date.parse(previous.timestamp)
+                previous == null ||
+                price < previous
             ) {
-                retailers.set(retailer, product);
+                shops.set(row.retailer, price);
             }
+
         }
 
-        const ranked = [];
+        const result = eligible.map(row => {
 
-        for (const retailers of market.values()) {
-            const offers = [...retailers.values()];
+            const quality = qualityScore(
+                row.model,
+                specs,
+                profile
+            );
 
-            const marketPrice = offers.length >= 2
-                ? median(offers.map(p => p.price))
+            const ratio = valueRatio(
+                quality,
+                row.price
+            );
+
+            const prices = [
+                ...(groups.get(
+                    groupKey(row)
+                ) || new Map()).values()
+            ];
+
+            const marketMedian =
+                prices.length >= 2
+                ? median(prices)
                 : null;
 
-            for (const product of offers) {
-                const price = number(product.price);
+            return {
 
-                if (
-                    price < minPrice ||
-                    price > maxPrice
-                ) continue;
+                ...row,
 
-                const model = normalizeModel(
-                    product.model
-                );
+                quality_score: quality,
 
-                const quality = qualityScore(
-                    specs[model],
-                    profile
-                );
+                value_ratio: ratio,
 
-                const ratio = valueRatio(
-                    quality,
-                    price
-                );
+                value_score: null,
 
-                if (ratio === null) continue;
+                segment: getSegment(row.price),
 
-                ranked.push({
-                    ...product,
+                market_median: marketMedian,
 
-                    quality_score: quality,
+                compared_retailers: prices.length,
 
-                    value_ratio: ratio,
+                deal_score: dealScore(
+                    Number(row.price),
+                    marketMedian
+                ),
 
-                    market_price: marketPrice,
+                advertised_discount:
+                    advertisedDiscount(row)
 
-                    retailer_count: offers.length,
+            };
 
-                    deal_score: dealScore(
-                        price,
-                        marketPrice
-                    ),
+        });
 
-                    advertised_discount:
-                        advertisedDiscount(
-                            price,
-                            product.original_price
-                        )
-                });
-            }
+        const bestBySegment = new Map();
+
+        for (const row of result) {
+
+            if (row.value_ratio == null) continue;
+
+            const best =
+                bestBySegment.get(row.segment) || 0;
+
+            bestBySegment.set(
+                row.segment,
+                Math.max(best, row.value_ratio)
+            );
+
         }
 
-        ranked.sort(
+        for (const row of result) {
+
+            const best = bestBySegment.get(
+                row.segment
+            );
+
+            if (
+                best > 0 &&
+                row.value_ratio != null
+            ) {
+
+                row.value_score = round(
+                    row.value_ratio / best * 100
+                );
+
+            }
+
+        }
+
+        return result.sort(
             (a, b) =>
-                b.value_ratio - a.value_ratio ||
-                a.price - b.price
+                (b.value_score ?? -1) -
+                (a.value_score ?? -1) ||
+                (b.value_ratio ?? -1) -
+                (a.value_ratio ?? -1)
         );
 
-        const bestRatio =
-            ranked[0]?.value_ratio || 0;
-
-        return ranked.map((product, index) => ({
-            ...product,
-
-            rank: index + 1,
-
-            value_score: bestRatio > 0
-                ? round(
-                    product.value_ratio /
-                    bestRatio * 100
-                )
-                : null
-        }));
-    }
-
-    // =====================================
-    // PRICE SEGMENTS
-    // =====================================
-
-    function getSegment(price) {
-        const p = number(price);
-
-        if (p === null || p <= 0) return null;
-
-        if (p < 10000000) return "Dưới 10 triệu";
-        if (p < 15000000) return "10–15 triệu";
-        if (p < 20000000) return "15–20 triệu";
-        if (p < 25000000) return "20–25 triệu";
-        if (p < 30000000) return "25–30 triệu";
-        if (p < 40000000) return "30–40 triệu";
-
-        return "Trên 40 triệu";
     }
 
     window.iPhoneValue = {
+
         VERSION,
         PROFILES,
+        getSegment,
         qualityScore,
         valueRatio,
+        isFresh,
         dealScore,
         advertisedDiscount,
-        rankProducts,
-        getSegment
+        rankProducts
+
     };
 
 })();
