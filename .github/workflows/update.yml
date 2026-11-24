@@ -42,5 +42,4 @@ jobs:
         run: python crawler/discover.py
 
       - name: Update iPhone prices
-        if: ${{ false }}
         run: python crawler/main.py
