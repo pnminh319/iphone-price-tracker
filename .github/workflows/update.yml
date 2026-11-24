@@ -1,1 +1,41 @@
 
+
+name: Update iPhone Prices
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: '17 */3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iphone-price-update
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run iPhone crawler
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+
+        run: python crawler/main.py
