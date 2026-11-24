@@ -1,176 +1,294 @@
 
 import json
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 
-from main import get_book, HEADERS, normalize_price
+import gspread
+
+from main import (
+    get_book,
+    HEADERS,
+    normalize_price,
+    load_records,
+    now
+)
 
 
-VERSION = "V4.2"
+VERSION = "V5.3"
 
-VN_TZ = timezone(timedelta(hours=7))
+ROOT = Path(__file__).resolve().parent.parent
+OUTPUT = ROOT / "docs" / "data.json"
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-
-DOCS_DIR = ROOT_DIR / "docs"
-
-OUTPUT_FILE = DOCS_DIR / "data.json"
-
-
-PRICE_FIELDS = [
-    "price",
-    "baseline_price",
-    "original_price",
-    "saving_amount"
-]
-
-PERCENT_FIELDS = [
-    "discount_pct",
-    "advertised_discount_pct"
-]
+LOCAL_RETAILERS = {
+    "TGDD",
+    "FPT"
+}
 
 
-def now():
+def number(value):
 
-    return datetime.now(VN_TZ).isoformat(
-        timespec="seconds"
+    try:
+
+        if value in ("", None):
+            return None
+
+        return float(
+            str(value).replace("%", "")
+        )
+
+    except (ValueError, TypeError):
+        return None
+
+
+def normalize_row(row):
+
+    record = {
+        key: row.get(key, "")
+        for key in HEADERS
+    }
+
+    record["retailer"] = str(
+        record["retailer"]
+    ).strip().upper()
+
+    record["sku"] = str(
+        record["sku"]
+    ).strip().upper()
+
+    record["color"] = (
+        str(record["color"]).strip()
+        or "UNKNOWN"
     )
 
+    for field in (
+        "price",
+        "baseline_price",
+        "original_price"
+    ):
 
-def read_sheet(book, sheet_name):
+        record[field] = normalize_price(
+            record[field]
+        )
 
-    ws = book.worksheet(sheet_name)
+    for field in (
+        "discount_pct",
+        "advertised_discount_pct",
+        "saving_amount"
+    ):
 
-    rows = ws.get_all_records(
-        value_render_option="UNFORMATTED_VALUE"
+        record[field] = number(
+            record[field]
+        )
+
+    record["scope"] = (
+        row.get("scope")
+        or (
+            "PRODUCT"
+            if record["color"].upper() == "UNKNOWN"
+            else "COLOR"
+        )
     )
 
-    result = []
+    return record
 
-    for row in rows:
 
-        if not row.get("sku"):
+def read_sheet(
+    book,
+    name,
+    optional=False
+):
+
+    try:
+
+        ws = book.worksheet(name)
+
+    except gspread.WorksheetNotFound:
+
+        if optional:
+            return []
+
+        raise
+
+    records = []
+
+    for row in load_records(ws):
+
+        row = normalize_row(row)
+
+        if (
+            not row["sku"]
+            or not row["retailer"]
+        ):
             continue
 
-        if not row.get("retailer"):
-            continue
-
-        record = {
-            field: row.get(field, "")
-            for field in HEADERS
-        }
-
-        # Normalize price fields.
-
-        for field in PRICE_FIELDS:
-
-            value = record.get(field)
-
-            if field == "saving_amount":
-
-                try:
-                    if isinstance(value, (int, float)):
-                        record[field] = int(value)
-                    elif value:
-                        text = str(value)
-                        for char in [".", ",", " ", "đ", "₫"]:
-                            text = text.replace(char, "")
-                        record[field] = int(text)
-                    else:
-                        record[field] = None
-
-                except (ValueError, TypeError):
-                    record[field] = None
-
-            else:
-
-                record[field] = normalize_price(value)
-
-        # Normalize discount percentages.
-
-        for field in PERCENT_FIELDS:
-
-            value = record.get(field)
-
-            try:
-
-                text = str(value).replace(
-                    "%", ""
-                ).replace(",", ".").strip()
-
-                record[field] = (
-                    float(text) if text else None
-                )
-
-            except (ValueError, TypeError):
-
-                record[field] = None
-
-        result.append(record)
+        records.append(row)
 
     print(
-        f"READ {sheet_name}: {len(result)} rows"
+        "READ:",
+        name,
+        len(records)
     )
 
-    return result
+    return records
+
+
+def get_key(row):
+
+    return (
+        row["retailer"],
+        row["sku"]
+    )
+
+
+def timestamp_key(row):
+
+    try:
+
+        value = datetime.fromisoformat(
+            str(row["timestamp"])
+            .replace("Z", "+00:00")
+        )
+
+        return value.timestamp()
+
+    except (ValueError, TypeError):
+        return 0
+
+
+def merge_current(cloud, local):
+
+    merged = {}
+
+    for row in cloud:
+
+        key = get_key(row)
+
+        if (
+            key not in merged
+            or timestamp_key(row)
+            > timestamp_key(merged[key])
+        ):
+
+            merged[key] = row
+
+    for row in local:
+
+        if row["retailer"] not in LOCAL_RETAILERS:
+            continue
+
+        key = get_key(row)
+
+        merged[key] = row
+
+    return sorted(
+        merged.values(),
+        key=lambda row: (
+            row["model"],
+            row["storage"],
+            row["retailer"],
+            row["color"]
+        )
+    )
+
+
+def merge_history(cloud, local):
+
+    merged = {}
+
+    for row in cloud + local:
+
+        key = (
+            row["retailer"],
+            row["sku"],
+            row["timestamp"]
+        )
+
+        merged[key] = row
+
+    return sorted(
+        merged.values(),
+        key=timestamp_key
+    )
 
 
 def main():
 
-    print("=" * 50)
-    print("EXPORT DASHBOARD", VERSION)
-    print("START:", now())
-    print("=" * 50)
+    print("=" * 60)
+    print("DASHBOARD EXPORT", VERSION)
 
     book = get_book()
 
-    current = read_sheet(
+    cloud_current = read_sheet(
         book,
         "CURRENT_PRICE"
     )
 
-    history = read_sheet(
+    cloud_history = read_sheet(
         book,
         "PRICE_HISTORY"
     )
 
-    data = {
+    local_current = read_sheet(
+        book,
+        "LOCAL_CURRENT_PRICE",
+        optional=True
+    )
+
+    local_history = read_sheet(
+        book,
+        "LOCAL_PRICE_HISTORY",
+        optional=True
+    )
+
+    current = merge_current(
+        cloud_current,
+        local_current
+    )
+
+    history = merge_history(
+        cloud_history,
+        local_history
+    )
+
+    if not current:
+
+        raise RuntimeError(
+            "NO_CURRENT_DATA"
+        )
+
+    payload = {
         "version": VERSION,
         "exported_at": now(),
         "current": current,
         "history": history
     }
 
-    DOCS_DIR.mkdir(
+    OUTPUT.parent.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    temp_file = DOCS_DIR / "data.tmp"
+    temp = OUTPUT.with_suffix(".tmp")
 
-    temp_file.write_text(
+    temp.write_text(
         json.dumps(
-            data,
+            payload,
             ensure_ascii=False,
             indent=2,
-            default=str,
             allow_nan=False
         ),
         encoding="utf-8"
     )
 
-    temp_file.replace(OUTPUT_FILE)
+    temp.replace(OUTPUT)
 
-    print("=" * 50)
+    print("CURRENT:", len(current))
+    print("HISTORY:", len(history))
+    print("OUTPUT:", OUTPUT)
     print("EXPORT SUCCESS")
-    print("CURRENT PRODUCTS:", len(current))
-    print("HISTORY RECORDS:", len(history))
-    print("OUTPUT:", OUTPUT_FILE)
-    print("UPDATED:", now())
-    print("=" * 50)
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-
     main()
