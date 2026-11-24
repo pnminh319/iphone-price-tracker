@@ -1,280 +1,637 @@
 
+import json
 import re
+import time
+import requests
 
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from urllib.parse import urlparse
+from urllib.robotparser import RobotFileParser
 
-from main import (
-    check_url,
-    check_robots,
-    get_jsonld_price,
-    USER_AGENT
-)
+VERSION = "V5.0"
 
+USER_AGENT = "iPhonePriceTracker/1.0"
 
-# ==========================================
-# ORIGINAL PRICE SELECTORS
-# ==========================================
+SESSION = requests.Session()
 
-ORIGINAL_PRICE_SELECTORS = {
-    "CPS": [
-        ".product__price--through",
-        ".box-price-present + .box-price-through",
-        ".box-price-through"
-    ],
+SESSION.headers.update({
+    "User-Agent": USER_AGENT,
+    "Accept-Language": "vi-VN,vi;q=0.9",
+    "Accept": "text/html,application/xhtml+xml"
+})
 
-    "HHM": [],
-    "DDV": [],
-    "TGDD": [],
-    "FPT": [],
-    "VTS": []
+ROBOTS_CACHE = {}
+
+RETAILER_DOMAINS = {
+    "CPS": "cellphones.com.vn",
+    "HHM": "hoanghamobile.com",
+    "DDV": "didongviet.vn",
+    "VTS": "viettelstore.vn",
+    "TGDD": "thegioididong.com",
+    "FPT": "fptshop.com.vn"
 }
 
 
-# ==========================================
-# NORMALIZE DISPLAY PRICE
-# ==========================================
+# ========================================
+# NORMALIZE PRICE
+# ========================================
 
-def parse_display_price(text):
+def normalize_price(value):
 
-    if not text:
+    if value is None:
         return None
 
-    text = str(text).strip()
+    if isinstance(value, (int, float)):
+        price = int(value)
 
-    if not re.fullmatch(
-        r"[\d.,\s]+(?:đ|₫|VND)?\s*",
-        text,
-        re.I
-    ):
-        return None
+    else:
 
-    digits = re.sub(r"\D", "", text)
+        text = str(value).strip()
 
-    if not digits:
-        return None
+        if re.fullmatch(r"\d+(?:\.0+)?", text):
+            price = int(float(text))
 
-    price = int(digits)
+        else:
 
-    if 1000000 <= price <= 100000000:
+            match = re.fullmatch(
+                r"(\d{1,3}(?:[.,]\d{3})+)"
+                r"\s*(?:đ|₫|VND|VNĐ)?",
+                text,
+                re.IGNORECASE
+            )
+
+            if not match:
+                return None
+
+            price = int(
+                re.sub(r"\D", "", match.group(1))
+            )
+
+    if 1000000 <= price <= 150000000:
         return price
 
     return None
 
 
-# ==========================================
-# READ ORIGINAL PRICE
-# ==========================================
+# ========================================
+# ROBOTS
+# ========================================
 
-def read_original_price(soup, retailer, price):
+def check_robots(url):
 
-    candidates = set()
+    parsed = urlparse(url)
 
-    selectors = ORIGINAL_PRICE_SELECTORS.get(
-        retailer, []
-    )
+    origin = f"{parsed.scheme}://{parsed.netloc}"
 
-    for selector in selectors:
+    if origin not in ROBOTS_CACHE:
 
-        elements = soup.select(selector)
+        robots_url = origin + "/robots.txt"
 
-        for element in elements:
+        try:
 
-            text = element.get_text(
-                " ", strip=True
+            response = SESSION.get(
+                robots_url,
+                timeout=(15, 25),
+                allow_redirects=False
             )
 
-            value = parse_display_price(text)
+            if response.status_code in (404, 410):
+
+                ROBOTS_CACHE[origin] = True
+
+            elif response.status_code == 200:
+
+                parser = RobotFileParser()
+
+                parser.parse(
+                    response.text.splitlines()
+                )
+
+                ROBOTS_CACHE[origin] = parser
+
+            else:
+
+                print(
+                    "ROBOTS_UNAVAILABLE:",
+                    response.status_code,
+                    origin
+                )
+
+                ROBOTS_CACHE[origin] = False
+
+        except requests.RequestException as e:
+
+            print("ROBOTS_ERROR:", str(e))
+
+            ROBOTS_CACHE[origin] = False
+
+    rule = ROBOTS_CACHE[origin]
+
+    if isinstance(rule, bool):
+        return rule
+
+    return rule.can_fetch(USER_AGENT, url)
+
+
+# ========================================
+# FETCH HTML
+# ========================================
+
+def fetch_html(url):
+
+    if not check_robots(url):
+        return None
+
+    try:
+
+        time.sleep(1.5)
+
+        response = SESSION.get(
+            url,
+            timeout=(15, 40),
+            allow_redirects=False
+        )
+
+        if response.status_code != 200:
 
             print(
-                "ORIGINAL PRICE CANDIDATE:",
-                selector,
-                text
+                "HTTP_ERROR:",
+                response.status_code,
+                url
             )
 
-            if value and value > price:
-                candidates.add(value)
+            return None
 
-    if len(candidates) == 1:
-
-        original_price = candidates.pop()
-
-        print(
-            "ORIGINAL PRICE:",
-            original_price
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
         )
 
-        return original_price
-
-    if len(candidates) > 1:
-
-        print(
-            "AMBIGUOUS ORIGINAL PRICE:",
-            sorted(candidates)
+        title = (
+            soup.title.get_text(strip=True).lower()
+            if soup.title else ""
         )
 
-    else:
+        if any(x in title for x in [
+            "access denied",
+            "verify you are human",
+            "captcha",
+            "just a moment"
+        ]):
 
-        print("ORIGINAL_PRICE_NOT_FOUND")
+            return None
+
+        return soup
+
+    except requests.RequestException as e:
+
+        print("FETCH_ERROR:", str(e))
+
+        return None
+
+
+# ========================================
+# JSON LD
+# ========================================
+
+def walk_json(data):
+
+    if isinstance(data, dict):
+
+        yield data
+
+        for value in data.values():
+            yield from walk_json(value)
+
+    elif isinstance(data, list):
+
+        for item in data:
+            yield from walk_json(item)
+
+
+def get_product_offers(soup):
+
+    products = []
+
+    for script in soup.select(
+        'script[type="application/ld+json"]'
+    ):
+
+        try:
+
+            data = json.loads(script.get_text())
+
+        except (ValueError, TypeError):
+            continue
+
+        for node in walk_json(data):
+
+            types = node.get("@type", [])
+
+            if isinstance(types, str):
+                types = [types]
+
+            if "Product" in types:
+                products.append(node)
+
+    # Do not guess when several products are present.
+    if len(products) != 1:
+        return []
+
+    offers = products[0].get("offers", [])
+
+    if isinstance(offers, dict):
+        offers = [offers]
+
+    return [
+        offer for offer in offers
+        if isinstance(offer, dict)
+        and offer.get("priceCurrency") == "VND"
+    ]
+
+
+def get_jsonld_price(soup):
+
+    offers = get_product_offers(soup)
+
+    prices = set()
+    stocks = set()
+
+    for offer in offers:
+
+        price = normalize_price(
+            offer.get("price")
+        )
+
+        if price:
+            prices.add(price)
+
+        availability = str(
+            offer.get("availability", "")
+        ).lower().split("/")[-1]
+
+        if availability == "instock":
+            stocks.add("IN_STOCK")
+
+        elif availability in (
+            "outofstock",
+            "soldout",
+            "discontinued"
+        ):
+            stocks.add("OUT_OF_STOCK")
+
+        elif availability in (
+            "preorder",
+            "presale"
+        ):
+            stocks.add("PREORDER")
+
+    price = (
+        next(iter(prices))
+        if len(prices) == 1 else None
+    )
+
+    stock = (
+        next(iter(stocks))
+        if len(stocks) == 1 else "UNKNOWN"
+    )
+
+    return price, stock
+
+
+# ========================================
+# SELECTOR HELPERS
+# ========================================
+
+def node_price(node):
+
+    if node is None:
+        return None
+
+    value = (
+        node.get("content")
+        or node.get_text(" ", strip=True)
+    )
+
+    return normalize_price(value)
+
+
+def unique_price(root, selector):
+
+    prices = {
+        node_price(node)
+        for node in root.select(selector)
+    }
+
+    prices.discard(None)
+
+    if len(prices) == 1:
+        return next(iter(prices))
 
     return None
 
 
-# ==========================================
-# PRICE DIAGNOSTICS
-# ==========================================
+def paired_old_price(
+    soup,
+    current_selector,
+    old_selector,
+    price
+):
 
-def print_price_candidates(soup):
+    if not price:
+        return None
 
-    selectors = [
-        '[itemprop="price"]',
-        'meta[property="product:price:amount"]',
-        ".product-price",
-        ".price-current",
-        ".sale-price",
-        ".price",
-        ".old-price",
+    candidates = set()
+
+    for current in soup.select(current_selector):
+
+        if node_price(current) != price:
+            continue
+
+        parent = current.parent
+
+        # Only inspect nearby price containers.
+        for _ in range(3):
+
+            if parent is None:
+                break
+
+            if parent.name in ("body", "html"):
+                break
+
+            if len(
+                parent.get_text(" ", strip=True)
+            ) > 350:
+                break
+
+            old_nodes = parent.select(old_selector)
+
+            if old_nodes:
+
+                values = {
+                    node_price(node)
+                    for node in old_nodes
+                }
+
+                values.discard(None)
+
+                if len(values) == 1:
+
+                    old = next(iter(values))
+
+                    if old > price:
+                        candidates.add(old)
+
+                break
+
+            parent = parent.parent
+
+    if len(candidates) == 1:
+        return next(iter(candidates))
+
+    return None
+
+
+# ========================================
+# CELLPHONES
+# ========================================
+
+def read_cps(soup):
+
+    price, stock = get_jsonld_price(soup)
+
+    selector = (
+        "p.font-bold.text-neutral-800.text-xl"
+    )
+
+    html_price = unique_price(
+        soup,
+        selector
+    )
+
+    if price and html_price and price != html_price:
+        return None, "PRICE_CONFLICT", None
+
+    price = price or html_price
+
+    original = paired_old_price(
+        soup,
+        selector,
+        "del.text-neutral-400",
+        price
+    )
+
+    return price, stock, original
+
+
+# ========================================
+# HOANG HA MOBILE
+# ========================================
+
+def read_hhm(soup):
+
+    price, stock = get_jsonld_price(soup)
+
+    # Do not use recommended-product prices.
+    # Do not use trade-in or member prices.
+
+    original = paired_old_price(
+        soup,
+        "[data-product-price]",
+        "[data-product-last-price]",
+        price
+    )
+
+    return price, stock, original
+
+
+# ========================================
+# DI DONG VIET
+# ========================================
+
+def read_ddv(soup):
+
+    json_price, stock = get_jsonld_price(soup)
+
+    selector = (
+        "div.text-2xl.font-bold.text-gray-900"
+    )
+
+    price = unique_price(
+        soup,
+        selector
+    )
+
+    if json_price and price and json_price != price:
+        return None, "PRICE_CONFLICT", None
+
+    price = price or json_price
+
+    original = paired_old_price(
+        soup,
+        selector,
+        "span.text-sm.text-gray-500.line-through",
+        price
+    )
+
+    return price, stock, original
+
+
+# ========================================
+# VIETTEL STORE
+# ========================================
+
+def read_vts(soup):
+
+    json_price, stock = get_jsonld_price(soup)
+
+    price = unique_price(
+        soup,
+        ".block-box-price .price"
+    )
+
+    if json_price and price and json_price != price:
+        return None, "PRICE_CONFLICT", None
+
+    price = price or json_price
+
+    original = paired_old_price(
+        soup,
+        ".block-box-price .price",
         ".price-old",
-        ".price-original",
-        ".product__price--through",
-        ".box-price-through",
-        "del",
-        "s",
-        "strike"
-    ]
+        price
+    )
 
-    for selector in selectors:
-
-        elements = soup.select(selector)
-
-        for element in elements[:3]:
-
-            value = (
-                element.get("content")
-                or element.get_text(
-                    " ", strip=True
-                )
-            )
-
-            print(
-                "PRICE CANDIDATE:",
-                selector,
-                str(value)[:150]
-            )
+    return price, stock, original
 
 
-# ==========================================
-# READ PRODUCT PRICE
-# ==========================================
+# ========================================
+# GENERIC READER
+# TGDD / FPT
+# ========================================
+
+def read_generic(soup):
+
+    price, stock = get_jsonld_price(soup)
+
+    # Original price is intentionally left empty
+    # until a retailer-specific selector is verified.
+
+    return price, stock, None
+
+
+READERS = {
+    "CPS": read_cps,
+    "HHM": read_hhm,
+    "DDV": read_ddv,
+    "VTS": read_vts,
+    "TGDD": read_generic,
+    "FPT": read_generic
+}
+
+
+# ========================================
+# MAIN INTERFACE
+# ========================================
 
 def read_price(product):
 
     retailer = str(
-        product["retailer"]
+        product.get("retailer", "")
     ).strip().upper()
 
     url = str(
-        product["url"]
+        product.get("url", "")
     ).strip()
 
-    check_url(retailer, url)
-    check_robots(url)
+    if retailer not in READERS:
+        return None, "UNKNOWN_RETAILER", None
 
-    with sync_playwright() as p:
+    parsed = urlparse(url)
 
-        browser = p.chromium.launch(
-            headless=True
+    host = parsed.hostname or ""
+
+    domain = RETAILER_DOMAINS[retailer]
+
+    if (
+        parsed.scheme != "https"
+        or not (
+            host == domain
+            or host.endswith("." + domain)
+        )
+    ):
+
+        return None, "INVALID_URL", None
+
+    print(
+        f"[{VERSION}]",
+        retailer,
+        url
+    )
+
+    soup = fetch_html(url)
+
+    if soup is None:
+        return None, "FETCH_FAILED", None
+
+    # A URL may represent multiple colors.
+    # Do not assign its default price to a named
+    # color without verified variant mapping.
+    color = str(
+        product.get("color", "")
+    ).strip().lower()
+
+    if color not in (
+        "",
+        "all",
+        "default",
+        "unknown",
+        "n/a",
+        "none",
+        "any",
+        "tất cả",
+        "chưa xác định"
+    ):
+
+        print("COLOR_NOT_VERIFIED:", color)
+
+        return None, "VARIANT_UNVERIFIED", None
+
+    try:
+
+        price, stock, original = READERS[
+            retailer
+        ](soup)
+
+        if not price:
+
+            print(
+                "PRICE_NOT_FOUND:",
+                retailer,
+                url
+            )
+
+            return None, stock, None
+
+        if original and original <= price:
+            original = None
+
+        print(
+            "PRICE_OK:",
+            retailer,
+            "PRICE =", price,
+            "ORIGINAL =", original,
+            "STOCK =", stock
         )
 
-        try:
+        return price, stock, original
 
-            page = browser.new_page(
-                locale="vi-VN",
-                timezone_id="Asia/Ho_Chi_Minh",
-                user_agent=USER_AGENT
-            )
+    except Exception as e:
 
-            response = page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=45000
-            )
+        print(
+            "READER_ERROR:",
+            retailer,
+            str(e)
+        )
 
-            if response and response.status >= 400:
-
-                raise ValueError(
-                    f"HTTP_{response.status}"
-                )
-
-            check_url(retailer, page.url)
-            check_robots(page.url)
-
-            page.wait_for_timeout(4000)
-
-            soup = BeautifulSoup(
-                page.content(),
-                "html.parser"
-            )
-
-            title = (
-                soup.title.get_text(
-                    " ", strip=True
-                )
-                if soup.title
-                else ""
-            )
-
-            print("PAGE TITLE:", title)
-
-            # Read current price from JSON-LD
-
-            try:
-
-                price, stock = get_jsonld_price(
-                    soup,
-                    product
-                )
-
-            except ValueError as error:
-
-                print("JSONLD:", str(error))
-
-                print_price_candidates(soup)
-
-                raise ValueError(
-                    "PRICE_REQUIRES_VALIDATION"
-                )
-
-            print("CURRENT PRICE:", price)
-
-            # Read advertised original price
-
-            original_price = read_original_price(
-                soup,
-                retailer,
-                price
-            )
-
-            if original_price is None:
-
-                print_price_candidates(soup)
-
-            if original_price:
-
-                saving = original_price - price
-
-                discount = round(
-                    saving / original_price * 100,
-                    2
-                )
-
-                print("SAVING:", saving)
-                print("ADVERTISED DISCOUNT:", discount)
-
-            print("STOCK:", stock)
-
-            return price, stock, original_price
-
-        finally:
-
-            browser.close()
+        return None, "ERROR", None
