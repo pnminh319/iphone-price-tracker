@@ -6,7 +6,7 @@
 <meta name="viewport"
       content="width=device-width, initial-scale=1">
 
-<title>iPhone Price Tracker V5.4</title>
+<title>iPhone Price Tracker V5.4.1</title>
 
 <style>
 
@@ -222,7 +222,7 @@ a:hover {
 <header>
     <h1>iPhone Price Tracker</h1>
     <p class="muted">
-        BLACK FRIDAY · 6 đại lý · Hybrid V5.4
+        BLACK FRIDAY · 6 đại lý · Hybrid V5.4.1
     </p>
     <p id="status" class="muted">
         Đang tải dữ liệu...
@@ -962,13 +962,13 @@ function drawHistory() {
     if (!H) { container.textContent = "Thiếu history.js"; return; }
     const days = Number($("historyDays").value);
     const end = Date.now(), start = end - days * 86400000;
-    const opts = {days, now: end};
+    const opts = {days, now: end, mode: $("historyMode").value};
     const raw = H.getHistory(history, selected, opts);
     const rows = H.getHistory(history, selected, {...opts, mode: $("historyMode").value});
     const add = (tag, text) => { const el = document.createElement(tag); el.textContent = text; container.append(el); return el; };
     add("h3", [selected.model, selected.storage, H.scope(selected) === "COLOR" ? selected.color : "Giá cấp sản phẩm"].join(" · "));
     const cov = H.coverage(raw, days);
-    add("p", `Có dữ liệu ${cov.observed_days} ngày trong cửa sổ ${days} ngày (gộp các đại lý). Chỉ gồm giá xác nhận còn hàng. Ngày thiếu dữ liệu không được nội suy.`).className = "muted";
+    add("p", `Có dữ liệu ${cov.observed_days} ngày trong cửa sổ ${days} ngày (gộp các đại lý). Chế độ ngày có thể gồm giá tham khảo bên thứ ba (chấm rỗng, chưa rõ tồn kho). Ngày thiếu dữ liệu không được nội suy.`).className = "muted";
     if (!rows.length) { add("p", "Chưa có lịch sử phù hợp."); return; }
     const colors = ["#facc15", "#fb923c", "#fb7185", "#60a5fa", "#c084fc", "#2dd4bf"];
     const ns = "http://www.w3.org/2000/svg";
@@ -993,9 +993,9 @@ function drawHistory() {
         const series=rows.filter(r=>r.retailer===retailer);
         let prev=null;
         for(const r of series) {
-            if(prev && r.time-prev.time<=86400000) node("line",{x1:x(prev.time),y1:y(prev.price),x2:x(r.time),y2:y(r.price),stroke:colors[i],"stroke-width":2});
-            const dot=node("circle",{cx:x(r.time),cy:y(r.price),r:3,fill:colors[i]});
-            const tip=document.createElementNS(ns,"title"); tip.textContent=retailer+" · "+dateText(r.timestamp)+" · "+money(r.price); dot.append(tip); prev=r;
+            if(prev && prev.source !== "BACKFILL" && r.source !== "BACKFILL" && r.time-prev.time<=86400000) node("line",{x1:x(prev.time),y1:y(prev.price),x2:x(r.time),y2:y(r.price),stroke:colors[i],"stroke-width":2});
+            const dot=node("circle",{cx:x(r.time),cy:y(r.price),r:3,fill:r.source === "BACKFILL" ? "none" : colors[i],stroke:colors[i]});
+            const tip=document.createElementNS(ns,"title"); tip.textContent=retailer+" · "+(r.source === "BACKFILL" ? r.day+" · Nguồn tham khảo: "+r.source_name : dateText(r.timestamp))+" · "+money(r.price); dot.append(tip); prev=r;
         }
     });
     container.append(svg);
@@ -1004,19 +1004,19 @@ function drawHistory() {
     const wrap=document.createElement("div");wrap.className="scroll";container.append(wrap);
     const table=document.createElement("table");wrap.append(table);
     const header=table.insertRow();
-    for(const label of ["Đại lý","Ngày có giá","Thấp nhất","Cao nhất","TB ngày","Trung vị","Giá mới nhất ghi nhận","Giá hiện tại","Giảm so với trung vị","Historical Deal"]) {const th=document.createElement("th");th.textContent=label;header.append(th);}
+    for(const label of ["Đại lý","Ngày có giá","Ngày tham khảo","Thấp nhất","Cao nhất","TB ngày","Trung vị","Giá mới nhất ghi nhận","Giá hiện tại","Giảm so với trung vị","Historical Deal"]) {const th=document.createElement("th");th.textContent=label;header.append(th);}
     for(const item of H.compareRetailers(history,selected,opts)) {
         const tr=table.insertRow(), s=item.stats;
         const fresh=current.filter(r=>r.retailer===item.retailer && H.matches(r,selected) && V.isFresh(r)).sort((a,b)=>Number(a.price)-Number(b.price))[0];
         // Chấm điểm theo các mốc trước ngày hiện tại, tránh tự so sánh.
         const prior=item.rows.filter(r=>r.day!==H.dayKey(end));
         const deal=fresh?H.historicalDeal(fresh.price,prior):null;
-        for(const v of [shops[item.retailer],s?.observed_days??0,money(s?.lowest),money(s?.highest),money(s?.average),money(s?.median),money(s?.latest_price),money(fresh?.price),deal?.sufficient_history?percent(deal.historical_discount_pct):"—",deal?.sufficient_history?score(deal.historical_deal_score):"Chưa đủ dữ liệu"]) cell(tr,v);
+        for(const v of [shops[item.retailer],s?.observed_days??0,new Set(item.rows.filter(r=>r.source === "BACKFILL").map(r=>r.day)).size,money(s?.lowest),money(s?.highest),money(s?.average),money(s?.median),money(s?.latest_price),money(fresh?.price),deal?.sufficient_history?percent(deal.historical_discount_pct):"—",deal?.sufficient_history?score(deal.historical_deal_score):"Chưa đủ dữ liệu"]) cell(tr,v);
     }
-    add("p","Điểm lịch sử cần tối thiểu 14 ngày có giá trước hôm nay; không phải xác nhận giảm giá Black Friday.").className="muted";
+    add("p","Thống kê ngày có thể gồm giá tham khảo. Điểm lịch sử chỉ dùng crawler trực tiếp, cần tối thiểu 14 ngày có giá trước hôm nay; không phải xác nhận giảm giá Black Friday.").className="muted";
     const btn=add("button","Xuất CSV lịch sử");btn.style.width="auto";
     btn.onclick=()=>{
-        const fields=["timestamp","retailer","model","storage","color","scope","price","stock","source"];
+        const fields=["timestamp","retailer","model","storage","color","scope","price","stock","source","source_name","source_url","granularity"];
         const quote=v=>{let t=String(v??"");if(typeof v!=="number" && /^[\s]*[=+@-]/.test(t))t="'"+t;return '"'+t.replaceAll('"','""')+'"';};
         const csv=[fields.join(","),...rows.map(r=>fields.map(f=>quote(r[f])).join(","))].join("\r\n");
         const url=URL.createObjectURL(new Blob(["\ufeff",csv],{type:"text/csv;charset=utf-8"}));
