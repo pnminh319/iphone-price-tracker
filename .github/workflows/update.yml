@@ -1,5 +1,5 @@
 
-name: Update iPhone Prices V4.2
+name: Update iPhone Prices V5.3
 
 on:
   schedule:
@@ -7,19 +7,61 @@ on:
 
   workflow_dispatch:
 
+  pull_request:
+    branches:
+      - main
+
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: iphone-price-tracker
+  group: iphone-price-tracker-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+
+  validate:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate Python
+        run: |
+          python -m compileall -q crawler
+
+      - name: Validate specs
+        run: |
+          python -m json.tool docs/specs.json > /dev/null
+
+      - name: Validate JavaScript
+        run: |
+          node --check docs/value.js
+
+      - name: Check dashboard
+        run: |
+          test -f docs/index.html
+
   update-prices:
+
+    needs: validate
+
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
 
     runs-on: ubuntu-latest
 
     timeout-minutes: 120
+
+    permissions:
+      contents: write
 
     env:
       GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
@@ -29,34 +71,17 @@ jobs:
 
     steps:
 
-      - name: Checkout latest main
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
           ref: main
-
-      - name: Verify crawler V4.2
-        run: |
-          echo "=============================="
-          echo "CHECKING CRAWLER VERSION"
-          git rev-parse HEAD
-          pwd
-          ls -la crawler
-          grep -n "VERSION" crawler/main.py
-
-          if ! grep -Fq 'VERSION = "V4.2"' crawler/main.py; then
-            echo "ERROR: MAIN.PY IS NOT V4.2"
-            exit 1
-          fi
-
-          echo "MAIN.PY V4.2 VERIFIED"
-          echo "=============================="
 
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      - name: Install libraries
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -66,22 +91,17 @@ jobs:
         run: |
           python -m playwright install --with-deps chromium
 
-      - name: Check Python syntax
+      - name: Discover cloud products
+        continue-on-error: true
         run: |
-          python -m py_compile crawler/main.py
-          python -m py_compile crawler/price_reader.py
-          python -m py_compile crawler/discover.py
-          python -m py_compile crawler/export_dashboard.py
+          python crawler/cloud_runner.py discover
 
-      - name: Discover iPhone products
+      - name: Update cloud prices
+        continue-on-error: true
         run: |
-          python crawler/discover.py
+          python -u crawler/cloud_runner.py prices
 
-      - name: Update iPhone prices V4.2
-        run: |
-          python -u crawler/main.py
-
-      - name: Export dashboard data
+      - name: Export all retailer data
         run: |
           python crawler/export_dashboard.py
 
@@ -95,6 +115,33 @@ jobs:
           if git diff --cached --quiet; then
             echo "No data changes"
           else
-            git commit -m "Auto update iPhone prices V4.2"
+            git commit -m "Auto update iPhone prices V5.3"
             git push origin main
           fi
+
+      - name: Upload dashboard
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+
+    needs: update-prices
+
+    if: github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
