@@ -1,0 +1,91 @@
+
+name: Test Google Sheets
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-connection:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install libraries
+        run: pip install gspread google-auth
+
+      - name: Test Google Sheets connection
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import gspread
+          from datetime import datetime, timezone, timedelta
+
+          print("1. Checking GitHub Secrets...")
+
+          credentials = json.loads(
+              os.environ["GOOGLE_CREDENTIALS"]
+          )
+
+          spreadsheet_id = os.environ["SPREADSHEET_ID"]
+
+          print("2. Connecting to Google Sheets...")
+
+          client = gspread.service_account_from_dict(
+              credentials,
+              scopes=[
+                  "https://www.googleapis.com/auth/spreadsheets"
+              ]
+          )
+
+          book = client.open_by_key(spreadsheet_id)
+
+          print("Connected:", book.title)
+
+          print("3. Checking worksheets...")
+
+          required = [
+              "PRODUCTS",
+              "CURRENT_PRICE",
+              "PRICE_HISTORY",
+              "CRAWL_LOG"
+          ]
+
+          for name in required:
+              book.worksheet(name)
+              print("OK:", name)
+
+          print("4. Testing write permission...")
+
+          sheet = book.worksheet("CRAWL_LOG")
+
+          if not sheet.row_values(1):
+              sheet.append_row([
+                  "timestamp",
+                  "retailer",
+                  "url",
+                  "status"
+              ])
+
+          now = datetime.now(
+              timezone(timedelta(hours=7))
+          ).isoformat(timespec="seconds")
+
+          sheet.append_row([
+              now,
+              "SYSTEM",
+              "",
+              "CONNECTION_SUCCESS"
+          ])
+
+          print("WRITE SUCCESS")
+          print("ALL TESTS PASSED")
+          PY
