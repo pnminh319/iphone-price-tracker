@@ -1,7 +1,7 @@
-
 import json
+import os
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import gspread
@@ -15,7 +15,8 @@ from main import (
 )
 
 
-VERSION = "V5.3"
+VERSION = "V5.4.1"
+HISTORY_DAYS = 90
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "docs" / "data.json"
@@ -150,6 +151,8 @@ def timestamp_key(row):
             .replace("Z", "+00:00")
         )
 
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone(timedelta(hours=7)))
         return value.timestamp()
 
     except (ValueError, TypeError):
@@ -212,6 +215,53 @@ def merge_history(cloud, local):
     )
 
 
+def read_backfill(book):
+    try:
+        ws = book.worksheet("BACKFILL_PRICE_HISTORY")
+    except gspread.WorksheetNotFound:
+        return []
+
+    records = []
+    if os.environ.get("ENABLE_BACKFILL", "").lower() != "true":
+        print("BACKFILL DISABLED: permission not confirmed")
+        return []
+    for raw in load_records(ws):
+        if raw.get("source") != "CONENMUA":
+            continue
+        if not str(raw.get("source_url", "")).startswith("https://"):
+            continue
+        row = normalize_row(raw)
+        if not all(row.get(k) for k in ("sku", "model", "storage", "price")):
+            continue
+        if row["retailer"] not in {"TGDD", "FPT", "CPS", "HHM", "DDV", "VTS"}:
+            continue
+        row["stock"] = "UNKNOWN"
+        row["scope"] = "PRODUCT"
+        row["color"] = "UNKNOWN"
+        row["granularity"] = "DAILY"
+        row["source"] = "BACKFILL"
+        row["source_name"] = str(raw.get("source", ""))
+        row["source_url"] = str(raw["source_url"])
+        records.append(row)
+    print("READ: BACKFILL_PRICE_HISTORY", len(records))
+    return records
+
+
+def prepare_history(cloud, local, backfill, end):
+    merged = {}
+    start = end - HISTORY_DAYS * 86400
+    for row in backfill + cloud + local:
+        t = timestamp_key(row)
+        if not start <= t <= end:
+            continue
+        row = dict(row)
+        row["timestamp"] = datetime.fromtimestamp(t, timezone.utc).isoformat()
+        row.setdefault("source", "CRAWLER")
+        key = (row["retailer"], row["sku"], t)
+        merged[key] = row
+    return sorted(merged.values(), key=timestamp_key)
+
+
 def main():
 
     print("=" * 60)
@@ -246,9 +296,10 @@ def main():
         local_current
     )
 
-    history = merge_history(
-        cloud_history,
-        local_history
+    backfill = read_backfill(book)
+    history = prepare_history(
+        cloud_history, local_history, backfill,
+        datetime.now(timezone.utc).timestamp()
     )
 
     if not current:
@@ -261,6 +312,7 @@ def main():
         "version": VERSION,
         "exported_at": now(),
         "current": current,
+        "history_days": HISTORY_DAYS,
         "history": history
     }
 
