@@ -1,0 +1,162 @@
+
+{
+  "version": "V5.3",
+  "method": "estimated_relative_quality",
+  "verified_benchmarks": false,
+  "models": {
+    "iphone 11": {
+      "performance": 49,
+      "camera": 48,
+      "battery": 52,
+      "display": 45,
+      "longevity": 30
+    },
+    "iphone 12": {
+      "performance": 55,
+      "camera": 54,
+      "battery": 48,
+      "display": 65,
+      "longevity": 40
+    },
+    "iphone 13": {
+      "performance": 62,
+      "camera": 61,
+      "battery": 64,
+      "display": 68,
+      "longevity": 48
+    },
+    "iphone 13 pro": {
+      "performance": 65,
+      "camera": 72,
+      "battery": 70,
+      "display": 82,
+      "longevity": 48
+    },
+    "iphone 13 pro max": {
+      "performance": 65,
+      "camera": 72,
+      "battery": 84,
+      "display": 83,
+      "longevity": 48
+    },
+    "iphone 14": {
+      "performance": 65,
+      "camera": 65,
+      "battery": 66,
+      "display": 69,
+      "longevity": 55
+    },
+    "iphone 14 plus": {
+      "performance": 65,
+      "camera": 65,
+      "battery": 83,
+      "display": 70,
+      "longevity": 55
+    },
+    "iphone 14 pro": {
+      "performance": 70,
+      "camera": 78,
+      "battery": 71,
+      "display": 87,
+      "longevity": 55
+    },
+    "iphone 14 pro max": {
+      "performance": 70,
+      "camera": 78,
+      "battery": 87,
+      "display": 88,
+      "longevity": 55
+    },
+    "iphone 15": {
+      "performance": 72,
+      "camera": 74,
+      "battery": 72,
+      "display": 76,
+      "longevity": 65
+    },
+    "iphone 15 plus": {
+      "performance": 72,
+      "camera": 74,
+      "battery": 88,
+      "display": 77,
+      "longevity": 65
+    },
+    "iphone 15 pro": {
+      "performance": 79,
+      "camera": 85,
+      "battery": 74,
+      "display": 89,
+      "longevity": 72
+    },
+    "iphone 15 pro max": {
+      "performance": 79,
+      "camera": 88,
+      "battery": 90,
+      "display": 90,
+      "longevity": 72
+    },
+    "iphone 16e": {
+      "performance": 83,
+      "camera": 65,
+      "battery": 84,
+      "display": 70,
+      "longevity": 83
+    },
+    "iphone 16": {
+      "performance": 85,
+      "camera": 80,
+      "battery": 79,
+      "display": 79,
+      "longevity": 85
+    },
+    "iphone 16 plus": {
+      "performance": 85,
+      "camera": 80,
+      "battery": 93,
+      "display": 80,
+      "longevity": 85
+    },
+    "iphone 16 pro": {
+      "performance": 90,
+      "camera": 92,
+      "battery": 84,
+      "display": 94,
+      "longevity": 88
+    },
+    "iphone 16 pro max": {
+      "performance": 90,
+      "camera": 93,
+      "battery": 97,
+      "display": 95,
+      "longevity": 88
+    },
+    "iphone 17": {
+      "performance": 92,
+      "camera": 86,
+      "battery": 86,
+      "display": 94,
+      "longevity": 95
+    },
+    "iphone air": {
+      "performance": 94,
+      "camera": 74,
+      "battery": 73,
+      "display": 94,
+      "longevity": 95
+    },
+    "iphone 17 pro": {
+      "performance": 98,
+      "camera": 97,
+      "battery": 93,
+      "display": 98,
+      "longevity": 98
+    },
+    "iphone 17 pro max": {
+      "performance": 98,
+      "camera": 98,
+      "battery": 100,
+      "display": 98,
+      "longevity": 98
+    }
+  }
+}
