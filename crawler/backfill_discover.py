@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 from backfill_history import ROOT, DATA_DIR, parse_history, record_key, export_csv, write_google_sheets
 
+VERSION = 'V5.4.2.2'
 BASE = 'https://conenmua.vn'
 UA = 'iPhonePriceTracker/1.0'
 SHOPS = {'thế giới di động':'TGDD','cellphones':'CPS','viettel store':'VTS','fpt shop':'FPT','hoàng hà mobile':'HHM','di động việt':'DDV'}
@@ -29,13 +30,13 @@ def discover(html, model, targets):
         if not ident or ident[0]!=model:
             rejected['identity'] += 1; continue
         if re.search(BAD,text.lower()) or 'chính hãng' not in text.lower():
-            rejected['condition'] += 1; continue
+            rejected['condition'] += 1
+            print('SKIP CONDITION', a.get_text(' ',strip=True), '|', text[:300]); continue
         shops = [v for k,v in SHOPS.items() if 'bán trên '+k in text.lower()]
         if len(shops)!=1:
             rejected['retailer'] += 1; continue
         if (*ident,shops[0]) not in targets:
-            rejected['not_in_current'] += 1
-            print('SKIP TARGET', *ident, shops[0]); continue
+            print('HISTORY ONLY', *ident, shops[0])
         path = a['href']; m = re.fullmatch(r'/san-pham/(\d+)/[\w-]+',path)
         if m: found[m[1]] = {'id':m[1],'url':BASE+path,'model':ident[0],'storage':ident[1],'retailer':shops[0],'file':'backfill_'+m[1]+'.html'}
     print('LINKS:', len(soup.select('a[href*="/san-pham/"]')), 'REJECTED:', dict(rejected))
@@ -67,6 +68,7 @@ def main():
     models=sorted({x[0] for x in targets if not a.model or x[0]==a.model.lower().strip()})
     if not models: raise RuntimeError('NO MATCHING MODELS')
     if a.listing_html and (len(models)!=1 or a.write): p.error('--listing-html requires one model and preview')
+    print('VERSION:', VERSION)
     print('TARGETS:', sorted(x for x in targets if x[0] in models))
     DATA_DIR.mkdir(parents=True,exist_ok=True); fetch=Fetcher(); candidates=[]
     for model in models:
