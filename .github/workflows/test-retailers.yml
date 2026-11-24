@@ -1,0 +1,139 @@
+
+name: Test 6 iPhone Retailers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-retailers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: pip install requests beautifulsoup4
+
+      - name: Test all 6 retailers
+        run: |
+          python - <<'PY'
+          import requests
+          from bs4 import BeautifulSoup
+          from urllib.parse import urlparse
+          from urllib.robotparser import RobotFileParser
+          from concurrent.futures import ThreadPoolExecutor
+
+          websites = {
+              "TGDD": "https://www.thegioididong.com/dtdd-apple-iphone",
+              "FPT": "https://fptshop.com.vn/dien-thoai/apple-iphone",
+              "CPS": "https://cellphones.com.vn/mobile/apple.html",
+              "HHM": "https://hoanghamobile.com/dien-thoai-di-dong/iphone",
+              "DDV": "https://didongviet.vn/dien-thoai-iphone.html",
+              "VTS": "https://viettelstore.vn/ket-qua-tim-kiem.html?keyword=iphone&sort=SearchResult"
+          }
+
+          agent = "iPhonePriceTracker/1.0"
+
+          def test(item):
+              code, url = item
+              result = [f"RETAILER: {code}"]
+
+              try:
+                  session = requests.Session()
+                  session.headers.update({
+                      "User-Agent": agent,
+                      "Accept-Language": "vi-VN,vi;q=0.9"
+                  })
+
+                  p = urlparse(url)
+                  robots_url = f"{p.scheme}://{p.netloc}/robots.txt"
+
+                  robots = session.get(
+                      robots_url,
+                      timeout=(15, 30)
+                  )
+
+                  result.append(
+                      f"ROBOTS_HTTP: {robots.status_code}"
+                  )
+
+                  if robots.status_code == 200:
+                      parser = RobotFileParser()
+                      parser.parse(robots.text.splitlines())
+
+                      if not parser.can_fetch(agent, url):
+                          result.append("ROBOTS_DISALLOWED")
+                          return False, result
+
+                  elif robots.status_code not in (404, 410):
+                      result.append("ROBOTS_UNAVAILABLE")
+                      return False, result
+
+                  response = session.get(
+                      url,
+                      timeout=(15, 30),
+                      allow_redirects=False
+                  )
+
+                  result.append(
+                      f"PAGE_HTTP: {response.status_code}"
+                  )
+
+                  if response.status_code != 200:
+                      result.append("PAGE_UNAVAILABLE")
+                      return False, result
+
+                  soup = BeautifulSoup(
+                      response.text,
+                      "html.parser"
+                  )
+
+                  title = soup.title.get_text(
+                      strip=True
+                  ) if soup.title else ""
+
+                  result.append(f"TITLE: {title}")
+                  result.append(f"HTML_SIZE: {len(response.content)}")
+
+                  links = set()
+
+                  for a in soup.select("a[href]"):
+                      href = a.get("href", "")
+                      if "iphone" in href.lower():
+                          links.add(href)
+
+                  result.append(
+                      f"IPHONE_LINKS: {len(links)}"
+                  )
+
+                  ok = len(links) > 0
+                  result.append(
+                      "CONNECTED" if ok else "NO_IPHONE_LINKS"
+                  )
+
+                  return ok, result
+
+              except Exception as e:
+                  result.append(f"ERROR: {e}")
+                  return False, result
+
+          success = 0
+
+          with ThreadPoolExecutor(max_workers=3) as pool:
+              for ok, lines in pool.map(test, websites.items()):
+                  print("=" * 50)
+                  print("\n".join(lines))
+                  success += int(ok)
+
+          print("=" * 50)
+          print(f"CONNECTED: {success}/6")
+          print(f"UNAVAILABLE: {6-success}/6")
+          print("=" * 50)
+          PY
