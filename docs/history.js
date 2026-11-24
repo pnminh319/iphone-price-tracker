@@ -1,8 +1,7 @@
-
 (function () {
     "use strict";
 
-    const VERSION = "V5.4";
+    const VERSION = "V5.4.1";
     const DAY = 86400000;
 
     const RETAILERS = [
@@ -132,7 +131,9 @@
 
             if (!matches(row, selected)) continue;
 
-            if (!validPrice(row)) continue;
+            if (row.source === "BACKFILL") {
+                if (mode !== "day" || !Number.isFinite(Number(row.price)) || Number(row.price) <= 0) continue;
+            } else if (!validPrice(row)) continue;
 
             if (!Number.isFinite(timestamp)) continue;
 
@@ -182,7 +183,7 @@
                     row.day
                 ].join("|");
 
-                daily.set(key, row);
+                if (!daily.has(key) || row.source !== "BACKFILL" || daily.get(key).source === "BACKFILL") daily.set(key, row);
             }
 
             rows = [...daily.values()].sort(
@@ -208,7 +209,7 @@
                 row.day
             ].join("|");
 
-            daily.set(key, row);
+            if (!daily.has(key) || row.source !== "BACKFILL" || daily.get(key).source === "BACKFILL") daily.set(key, row);
         }
 
         return [...daily.values()];
@@ -286,7 +287,7 @@
             selected,
             {
                 ...options,
-                mode: "hour"
+                mode: options.mode || "hour"
             }
         );
 
@@ -319,7 +320,7 @@
 
         if (!(price > 0)) return null;
 
-        const stats = statistics(rows);
+        const stats = statistics(rows.filter(r => r.source !== "BACKFILL"));
 
         if (!stats) return null;
 
