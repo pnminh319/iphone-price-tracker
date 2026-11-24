@@ -1,9 +1,9 @@
 
-name: Update iPhone Prices
+name: Update iPhone Prices V4.2
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '15 */3 * * *'
 
   workflow_dispatch:
 
@@ -29,10 +29,27 @@ jobs:
 
     steps:
 
-      - name: Checkout repository
+      - name: Checkout latest main
         uses: actions/checkout@v4
         with:
           ref: main
+
+      - name: Verify crawler V4.2
+        run: |
+          echo "=============================="
+          echo "CHECKING CRAWLER VERSION"
+          git rev-parse HEAD
+          pwd
+          ls -la crawler
+          grep -n "VERSION" crawler/main.py
+
+          if ! grep -Fq 'VERSION = "V4.2"' crawler/main.py; then
+            echo "ERROR: MAIN.PY IS NOT V4.2"
+            exit 1
+          fi
+
+          echo "MAIN.PY V4.2 VERIFIED"
+          echo "=============================="
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -49,26 +66,20 @@ jobs:
         run: |
           python -m playwright install --with-deps chromium
 
-      - name: Check crawler version
+      - name: Check Python syntax
         run: |
-          echo "=============================="
-          echo "CHECKING CRAWLER VERSION"
-          git rev-parse HEAD
-          grep -n "VERSION" crawler/main.py || true
-          if grep -q "INVALID_HEADERS" crawler/main.py; then
-            echo "ERROR: OLD MAIN.PY DETECTED"
-            exit 1
-          fi
-          grep -F 'VERSION = "V4.1"' crawler/main.py
-          echo "=============================="
+          python -m py_compile crawler/main.py
+          python -m py_compile crawler/price_reader.py
+          python -m py_compile crawler/discover.py
+          python -m py_compile crawler/export_dashboard.py
 
       - name: Discover iPhone products
         run: |
           python crawler/discover.py
 
-      - name: Update iPhone prices
+      - name: Update iPhone prices V4.2
         run: |
-          python crawler/main.py
+          python -u crawler/main.py
 
       - name: Export dashboard data
         run: |
@@ -84,6 +95,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No data changes"
           else
-            git commit -m "Auto update iPhone prices"
+            git commit -m "Auto update iPhone prices V4.2"
             git push origin main
           fi
