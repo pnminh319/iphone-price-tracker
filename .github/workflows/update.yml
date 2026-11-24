@@ -1,5 +1,4 @@
-
-name: Update iPhone Prices V5.3
+name: Update iPhone Prices V5.4.1
 
 on:
   schedule:
@@ -45,6 +44,7 @@ jobs:
       - name: Validate JavaScript
         run: |
           node --check docs/value.js
+          node --check docs/history.js
 
       - name: Check dashboard
         run: |
@@ -66,6 +66,7 @@ jobs:
     env:
       GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
       SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+      ENABLE_BACKFILL: ${{ vars.ENABLE_BACKFILL }}
       TZ: Asia/Ho_Chi_Minh
       PYTHONUNBUFFERED: "1"
 
@@ -115,7 +116,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No data changes"
           else
-            git commit -m "Auto update iPhone prices V5.3"
+            git commit -m "Auto update iPhone prices V5.4.1"
             git push origin main
           fi
 
