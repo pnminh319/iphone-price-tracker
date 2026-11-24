@@ -4,6 +4,7 @@ import json
 import time
 import re
 
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
@@ -15,8 +16,10 @@ from bs4 import BeautifulSoup
 
 
 # ==========================================
-# CONFIGURATION
+# 1. CONFIGURATION
 # ==========================================
+
+VERSION = "V4.1"
 
 VN_TZ = timezone(timedelta(hours=7))
 
@@ -48,12 +51,35 @@ HEADERS = [
     "saving_amount"
 ]
 
+PRODUCT_HEADERS = [
+    "sku",
+    "model",
+    "storage",
+    "color",
+    "retailer",
+    "url",
+    "active"
+]
+
 LOG_HEADERS = [
     "timestamp",
     "retailer",
     "url",
     "status"
 ]
+
+HEADER_ALIASES = {
+    "current_price": "price",
+    "old_price": "original_price",
+    "list_price": "original_price",
+    "regular_price": "original_price",
+    "originalprice": "original_price",
+    "advertised_discount": "advertised_discount_pct",
+    "saving": "saving_amount",
+    "savings": "saving_amount",
+    "product_url": "url",
+    "updated_at": "timestamp"
+}
 
 session = requests.Session()
 
@@ -66,7 +92,7 @@ robots_cache = {}
 
 
 # ==========================================
-# CURRENT TIME
+# 2. TIME
 # ==========================================
 
 def now():
@@ -77,13 +103,33 @@ def now():
 
 
 # ==========================================
-# GOOGLE SHEETS CONNECTION
+# 3. GOOGLE SHEETS CONNECTION
 # ==========================================
 
 def get_book():
 
+    raw_credentials = os.environ.get(
+        "GOOGLE_CREDENTIALS", ""
+    ).strip()
+
+    spreadsheet_id = os.environ.get(
+        "SPREADSHEET_ID", ""
+    ).strip()
+
+    if not raw_credentials:
+
+        raise ValueError(
+            "MISSING_GOOGLE_CREDENTIALS"
+        )
+
+    if not spreadsheet_id:
+
+        raise ValueError(
+            "MISSING_SPREADSHEET_ID"
+        )
+
     credentials = json.loads(
-        os.environ["GOOGLE_CREDENTIALS"]
+        raw_credentials
     )
 
     client = gspread.service_account_from_dict(
@@ -94,75 +140,293 @@ def get_book():
     )
 
     return client.open_by_key(
-        os.environ["SPREADSHEET_ID"].strip()
+        spreadsheet_id
     )
 
 
 # ==========================================
-# AUTO UPDATE SHEET HEADERS
+# 4. NORMALIZE HEADERS
 # ==========================================
 
-def ensure_headers(ws, headers):
+def normalize_header(value):
 
-    existing = ws.row_values(1)
+    value = str(value or "")
 
-    if existing == headers:
-        return
+    value = value.replace("\ufeff", "")
+    value = value.replace("\u200b", "")
+    value = value.strip().lower()
 
-    # Allow migration from old headers
-    # without deleting historical data.
+    value = re.sub(
+        r"[\s\-]+",
+        "_",
+        value
+    )
 
-    if existing and existing != headers[:len(existing)]:
+    return HEADER_ALIASES.get(
+        value,
+        value
+    )
+
+
+# ==========================================
+# 5. AUTO FIX SHEET HEADERS
+# ==========================================
+
+def ensure_headers(
+    ws,
+    required_headers,
+    optional_headers=None
+):
+
+    optional_headers = set(
+        optional_headers or []
+    )
+
+    values = ws.get_all_values()
+
+    if not values:
+
+        if ws.col_count < len(required_headers):
+
+            ws.add_cols(
+                len(required_headers)
+                - ws.col_count
+            )
+
+        ws.update(
+            range_name="A1",
+            values=[required_headers],
+            value_input_option="RAW"
+        )
+
+        print(
+            "HEADERS CREATED:",
+            ws.title
+        )
+
+        return list(required_headers)
+
+    original_headers = list(values[0])
+
+    while (
+        original_headers
+        and not str(original_headers[-1]).strip()
+    ):
+        original_headers.pop()
+
+    existing_headers = [
+        normalize_header(header)
+        for header in original_headers
+    ]
+
+    print("SHEET:", ws.title)
+    print("EXISTING HEADERS:", existing_headers)
+
+    counts = Counter(
+        header
+        for header in existing_headers
+        if header
+    )
+
+    duplicates = [
+        name
+        for name, count in counts.items()
+        if count > 1
+    ]
+
+    if duplicates:
 
         raise ValueError(
-            f"INVALID_HEADERS: {ws.title}"
+            f"DUPLICATE_HEADERS: "
+            f"{ws.title}: {duplicates}"
         )
 
-    if ws.col_count < len(headers):
+    if "" in existing_headers:
+
+        raise ValueError(
+            f"EMPTY_HEADER_INSIDE_TABLE: "
+            f"{ws.title}"
+        )
+
+    missing = [
+        header
+        for header in required_headers
+        if header not in existing_headers
+    ]
+
+    missing_required = [
+        header
+        for header in missing
+        if header not in optional_headers
+    ]
+
+    if missing_required and len(values) > 1:
+
+        raise ValueError(
+            f"MISSING_REQUIRED_HEADERS: "
+            f"{ws.title}: {missing_required}"
+        )
+
+    final_headers = (
+        existing_headers + missing
+    )
+
+    # Prevent assigning headers to columns
+    # that already contain unidentified data.
+
+    for row in values[1:]:
+
+        extra = row[len(existing_headers):]
+
+        if any(str(value).strip() for value in extra):
+
+            raise ValueError(
+                f"UNLABELED_DATA_COLUMNS: "
+                f"{ws.title}"
+            )
+
+    if ws.col_count < len(final_headers):
 
         ws.add_cols(
-            len(headers) - ws.col_count
+            len(final_headers)
+            - ws.col_count
         )
 
-    ws.update(
-        range_name="A1",
-        values=[headers],
-        value_input_option="RAW"
-    )
+    if original_headers != final_headers:
 
-    print(
-        "HEADERS UPDATED:",
-        ws.title
-    )
+        ws.update(
+            range_name="A1",
+            values=[final_headers],
+            value_input_option="RAW"
+        )
+
+        print(
+            "HEADERS AUTO FIXED:",
+            ws.title
+        )
+
+        print(
+            "ADDED COLUMNS:",
+            missing
+        )
+
+    else:
+
+        print(
+            "HEADERS OK:",
+            ws.title
+        )
+
+    return final_headers
 
 
 # ==========================================
-# NORMALIZE PRICE
+# 6. LOAD SHEET RECORDS
+# ==========================================
+
+def load_records(ws):
+
+    values = ws.get_all_values(
+        value_render_option="UNFORMATTED_VALUE"
+    )
+
+    if not values:
+
+        return []
+
+    headers = [
+        normalize_header(header)
+        for header in values[0]
+    ]
+
+    records = []
+
+    for row in values[1:]:
+
+        if not any(
+            str(value).strip()
+            for value in row
+        ):
+            continue
+
+        padded = list(row) + [""] * max(
+            0,
+            len(headers) - len(row)
+        )
+
+        record = dict(
+            zip(headers, padded)
+        )
+
+        records.append(record)
+
+    return records
+
+
+# ==========================================
+# 7. NORMALIZE PRICE
 # ==========================================
 
 def normalize_price(value):
 
-    if value is None:
+    if value is None or isinstance(value, bool):
+
+        return None
+
+    if isinstance(value, (int, float)):
+
+        if 1000000 <= value <= 100000000:
+
+            return int(value)
+
         return None
 
     value = str(value).strip()
 
+    value = re.sub(
+        r"(VND|VNĐ|₫|đ)",
+        "",
+        value,
+        flags=re.I
+    )
+
+    value = re.sub(r"\s+", "", value)
+
     try:
 
         if re.fullmatch(
-            r"\d+(\.\d{1,2})?",
+            r"\d+(?:[.,]0{1,2})?",
             value
         ):
 
-            price = int(float(value))
+            price = int(
+                float(value.replace(",", "."))
+            )
+
+        elif re.fullmatch(
+            r"\d{1,3}(?:\.\d{3})+",
+            value
+        ):
+
+            price = int(
+                value.replace(".", "")
+            )
+
+        elif re.fullmatch(
+            r"\d{1,3}(?:,\d{3})+",
+            value
+        ):
+
+            price = int(
+                value.replace(",", "")
+            )
 
         else:
 
-            price = int(
-                re.sub(r"\D", "", value)
-            )
+            return None
 
         if 1000000 <= price <= 100000000:
+
             return price
 
     except (ValueError, TypeError):
@@ -173,7 +437,7 @@ def normalize_price(value):
 
 
 # ==========================================
-# WALK JSON DATA
+# 8. WALK JSON
 # ==========================================
 
 def walk_json(data):
@@ -194,12 +458,28 @@ def walk_json(data):
 
 
 # ==========================================
-# READ JSON-LD PRICE
+# 9. READ JSON-LD PRODUCT PRICE
 # ==========================================
 
 def get_jsonld_price(soup, product):
 
     candidates = set()
+
+    expected_model = str(
+        product.get("model", "")
+    ).strip().lower()
+
+    expected_storage = re.sub(
+        r"\s+",
+        "",
+        str(product.get("storage", "")).lower()
+    )
+
+    if not expected_model or not expected_storage:
+
+        raise ValueError(
+            "MISSING_MODEL_OR_STORAGE"
+        )
 
     for script in soup.select(
         'script[type="application/ld+json"]'
@@ -220,43 +500,68 @@ def get_jsonld_price(soup, product):
             types = node.get("@type", [])
 
             if isinstance(types, str):
+
                 types = [types]
 
             if "Product" not in types:
+
                 continue
 
             name = str(
                 node.get("name", "")
             ).lower()
 
-            model = str(
-                product["model"]
-            ).strip().lower()
-
-            storage = str(
-                product["storage"]
-            ).lower().replace(" ", "")
-
             compact_name = re.sub(
-                r"\s+", "", name
+                r"\s+",
+                "",
+                name
             )
 
-            if model not in name:
+            model_pattern = (
+                r"(?<!\w)"
+                + re.escape(expected_model)
+                + r"(?!\w)"
+            )
+
+            match = re.search(
+                model_pattern,
+                name
+            )
+
+            if not match:
+
                 continue
 
-            suffix = name.split(model, 1)[1]
+            suffix = name[match.end():]
 
             if re.match(
-                r"\s*(pro|plus|max|air|mini)",
+                r"\s*(pro|plus|max|mini|air)\b",
                 suffix
             ):
+
                 continue
 
-            if storage not in compact_name:
+            storage_pattern = (
+                r"(?<!\d)"
+                + re.escape(expected_storage)
+                + r"(?!\w)"
+            )
+
+            storage_candidates = [
+                re.sub(r"\s+", "", x)
+                for x in re.findall(
+                    r"\d+\s*(?:gb|tb)\b",
+                    name
+                )
+            ]
+
+            if expected_storage not in storage_candidates:
+
                 continue
 
-            if any(x in name for x in [
-                "cũ",
+            if any(word in name for word in [
+                "máy cũ",
+                "hàng cũ",
                 "like new",
                 "đã qua sử dụng",
                 "refurbished",
@@ -274,19 +579,30 @@ def get_jsonld_price(soup, product):
             for offer in offers:
 
                 if not isinstance(offer, dict):
+
                     continue
 
-                if offer.get("@type") != "Offer":
+                offer_type = offer.get("@type", [])
+
+                if isinstance(offer_type, str):
+
+                    offer_type = [offer_type]
+
+                if "Offer" not in offer_type:
+
                     continue
 
-                if offer.get("priceCurrency") != "VND":
+                if str(
+                    offer.get("priceCurrency", "")
+                ).upper() != "VND":
+
                     continue
 
                 condition = str(
                     offer.get("itemCondition", "")
                 )
 
-                if any(x in condition for x in [
+                if any(word in condition for word in [
                     "UsedCondition",
                     "RefurbishedCondition",
                     "DamagedCondition"
@@ -313,7 +629,11 @@ def get_jsonld_price(soup, product):
 
     if len(candidates) == 1:
 
-        return candidates.pop()
+        price, stock = candidates.pop()
+
+        print("JSONLD PRICE:", price)
+
+        return price, stock
 
     if len(candidates) > 1:
 
@@ -327,10 +647,12 @@ def get_jsonld_price(soup, product):
 
 
 # ==========================================
-# VALIDATE WEBSITE URL
+# 10. VALIDATE RETAILER URL
 # ==========================================
 
 def check_url(retailer, url):
+
+    retailer = str(retailer).strip().upper()
 
     if retailer not in DOMAINS:
 
@@ -338,13 +660,13 @@ def check_url(retailer, url):
             "UNKNOWN_RETAILER"
         )
 
-    domain = DOMAINS[retailer]
-
     parsed = urlparse(url)
 
     host = (
         parsed.hostname or ""
     ).lower()
+
+    domain = DOMAINS[retailer]
 
     if parsed.scheme != "https":
 
@@ -361,9 +683,15 @@ def check_url(retailer, url):
             "INVALID_RETAILER_URL"
         )
 
+    if parsed.username or parsed.password:
+
+        raise ValueError(
+            "INVALID_URL_CREDENTIALS"
+        )
+
 
 # ==========================================
-# CHECK ROBOTS.TXT
+# 11. ROBOTS.TXT
 # ==========================================
 
 def check_robots(url):
@@ -376,28 +704,40 @@ def check_robots(url):
 
     if origin not in robots_cache:
 
-        response = session.get(
-            origin + "/robots.txt",
-            timeout=20
-        )
+        try:
 
-        if response.status_code in (404, 410):
-
-            robots_cache[origin] = None
-
-        else:
-
-            response.raise_for_status()
-
-            parser = RobotFileParser()
-
-            parser.parse(
-                response.text.splitlines()
+            response = session.get(
+                origin + "/robots.txt",
+                timeout=20
             )
 
-            robots_cache[origin] = parser
+            if response.status_code in (404, 410):
+
+                robots_cache[origin] = None
+
+            else:
+
+                response.raise_for_status()
+
+                parser = RobotFileParser()
+
+                parser.parse(
+                    response.text.splitlines()
+                )
+
+                robots_cache[origin] = parser
+
+        except requests.RequestException as error:
+
+            robots_cache[origin] = error
 
     parser = robots_cache[origin]
+
+    if isinstance(parser, Exception):
+
+        raise ValueError(
+            f"ROBOTS_UNAVAILABLE: {parser}"
+        )
 
     if parser and not parser.can_fetch(
         USER_AGENT,
@@ -410,19 +750,19 @@ def check_robots(url):
 
 
 # ==========================================
-# PRODUCT KEY
+# 12. PRODUCT KEY
 # ==========================================
 
 def get_key(retailer, sku):
 
     return (
         str(retailer).strip().upper(),
-        str(sku).strip()
+        str(sku).strip().upper()
     )
 
 
 # ==========================================
-# ACTIVE STATUS
+# 13. ACTIVE STATUS
 # ==========================================
 
 def active(value):
@@ -430,21 +770,154 @@ def active(value):
     return str(value).strip().lower() in [
         "true",
         "1",
-        "yes"
+        "1.0",
+        "yes",
+        "on"
     ]
 
 
 # ==========================================
-# MAIN CRAWLER
+# 14. CALCULATE DISCOUNTS
+# ==========================================
+
+def calculate_discounts(
+    price,
+    original_price,
+    baseline
+):
+
+    historical_discount = ""
+
+    advertised_discount = ""
+
+    saving_amount = ""
+
+    if baseline and baseline > 0:
+
+        historical_discount = round(
+            (baseline - price)
+            / baseline * 100,
+            2
+        )
+
+    if original_price and original_price >= price:
+
+        saving_amount = (
+            original_price - price
+        )
+
+        advertised_discount = round(
+            saving_amount
+            / original_price * 100,
+            2
+        )
+
+    return (
+        historical_discount,
+        advertised_discount,
+        saving_amount
+    )
+
+
+# ==========================================
+# 15. CONVERT RECORD TO SHEET ROW
+# ==========================================
+
+def record_to_row(record, headers):
+
+    return [
+        record.get(header, "")
+        for header in headers
+    ]
+
+
+# ==========================================
+# 16. SAVE HISTORY
+# ==========================================
+
+def append_records(ws, records, headers):
+
+    if not records:
+
+        return
+
+    rows = [
+        record_to_row(record, headers)
+        for record in records
+    ]
+
+    ws.append_rows(
+        rows,
+        value_input_option="RAW",
+        table_range="A1"
+    )
+
+    print(
+        f"SAVED {len(rows)} ROWS:",
+        ws.title
+    )
+
+
+# ==========================================
+# 17. SAVE CURRENT PRICE
+# ==========================================
+
+def save_current_price(
+    ws,
+    current,
+    headers,
+    old_row_count
+):
+
+    rows = [
+        record_to_row(record, headers)
+        for key, record in sorted(
+            current.items()
+        )
+    ]
+
+    values = [headers] + rows
+
+    extra_rows = max(
+        0,
+        old_row_count - len(rows)
+    )
+
+    values.extend([
+        [""] * len(headers)
+        for _ in range(extra_rows)
+    ])
+
+    if len(values) > ws.row_count:
+
+        ws.add_rows(
+            len(values) - ws.row_count
+        )
+
+    ws.update(
+        range_name="A1",
+        values=values,
+        value_input_option="RAW"
+    )
+
+    print(
+        "CURRENT PRICE SAVED:",
+        len(rows)
+    )
+
+
+# ==========================================
+# 18. MAIN CRAWLER
 # ==========================================
 
 def main():
 
     from price_reader import read_price
 
-    print("==============================")
-    print("IPHONE PRICE TRACKER V4")
-    print("==============================")
+    print("=" * 50)
+    print(f"IPHONE PRICE TRACKER {VERSION}")
+    print("START:", now())
+    print("=" * 50)
 
     book = get_book()
 
@@ -464,49 +937,84 @@ def main():
         "CRAWL_LOG"
     )
 
-    # Automatically upgrade old sheet headers.
+    # ======================================
+    # AUTO FIX HEADERS
+    # ======================================
+
+    print("CHECKING SHEET STRUCTURE...")
 
     ensure_headers(
+        products_ws,
+        PRODUCT_HEADERS
+    )
+
+    optional_price_headers = [
+        "original_price",
+        "advertised_discount_pct",
+        "saving_amount"
+    ]
+
+    current_headers = ensure_headers(
         current_ws,
-        HEADERS
+        HEADERS,
+        optional_price_headers
     )
 
-    ensure_headers(
+    history_headers = ensure_headers(
         history_ws,
-        HEADERS
+        HEADERS,
+        optional_price_headers
     )
 
-    ensure_headers(
+    log_headers = ensure_headers(
         log_ws,
-        LOG_HEADERS
+        LOG_HEADERS,
+        optional_headers=["status"]
     )
 
-    products = products_ws.get_all_records()
+    # ======================================
+    # LOAD EXISTING DATA
+    # ======================================
 
-    old_current = current_ws.get_all_records()
+    products = load_records(
+        products_ws
+    )
 
-    current = {
-        get_key(
-            row["retailer"],
-            row["sku"]
-        ): row
-        for row in old_current
-    }
+    old_current = load_records(
+        current_ws
+    )
 
-    history = history_ws.get_all_records()
+    history = load_records(
+        history_ws
+    )
+
+    current = {}
+
+    for row in old_current:
+
+        key = get_key(
+            row.get("retailer", ""),
+            row.get("sku", "")
+        )
+
+        if all(key):
+
+            current[key] = row
+
+    # ======================================
+    # BUILD BASELINE PRICES
+    # ======================================
 
     baselines = {}
-
-    # Preserve first observed historical price.
 
     for row in history:
 
         key = get_key(
-            row["retailer"],
-            row["sku"]
+            row.get("retailer", ""),
+            row.get("sku", "")
         )
 
-        price = (
+        baseline = (
             normalize_price(
                 row.get("baseline_price")
             )
@@ -515,18 +1023,16 @@ def main():
             )
         )
 
-        if price:
+        if all(key) and baseline:
 
             baselines.setdefault(
                 key,
-                price
+                baseline
             )
-
-    # Preserve existing baseline if available.
 
     for key, row in current.items():
 
-        price = (
+        baseline = (
             normalize_price(
                 row.get("baseline_price")
             )
@@ -535,25 +1041,23 @@ def main():
             )
         )
 
-        if price:
+        if baseline:
 
             baselines.setdefault(
                 key,
-                price
+                baseline
             )
 
-    history_rows = []
-    log_rows = []
-    active_keys = set()
-
-    success = 0
-    failed = 0
-    skipped = 0
+    # ======================================
+    # SELECT ACTIVE PRODUCTS
+    # ======================================
 
     active_products = [
         product
         for product in products
-        if active(product.get("active"))
+        if active(
+            product.get("active")
+        )
         and str(
             product.get("model", "")
         ).strip().lower().startswith("iphone")
@@ -573,42 +1077,57 @@ def main():
 
         print(
             "NO ACTIVE PRODUCTS. "
-            "Check PRODUCTS column G."
+            "Check PRODUCTS column active."
         )
 
         return
 
-    # Prevent ambiguous SKU collisions.
-
-    key_counts = {}
-
-    for product in active_products:
-
-        key = get_key(
-            product["retailer"],
-            product["sku"]
+    key_counts = Counter(
+        get_key(
+            product.get("retailer", ""),
+            product.get("sku", "")
         )
+        for product in active_products
+    )
 
-        key_counts[key] = (
-            key_counts.get(key, 0) + 1
-        )
+    history_records = []
+    log_records = []
+
+    success = 0
+    failed = 0
+    skipped = 0
 
     # ======================================
-    # PROCESS PRODUCTS
+    # PROCESS EACH PRODUCT
     # ======================================
 
-    for product in active_products:
+    for index, product in enumerate(
+        active_products,
+        start=1
+    ):
 
         retailer = str(
-            product["retailer"]
+            product.get("retailer", "")
         ).strip().upper()
 
         sku = str(
-            product["sku"]
+            product.get("sku", "")
+        ).strip().upper()
+
+        model = str(
+            product.get("model", "")
         ).strip()
 
+        storage = str(
+            product.get("storage", "")
+        ).strip()
+
+        color = str(
+            product.get("color", "")
+        ).strip() or "UNKNOWN"
+
         url = str(
-            product["url"]
+            product.get("url", "")
         ).strip()
 
         key = get_key(
@@ -616,27 +1135,42 @@ def main():
             sku
         )
 
-        active_keys.add(key)
+        print("-" * 50)
 
-        print("------------------------------")
+        print(
+            f"PRODUCT {index}/{len(active_products)}"
+        )
+
         print("RETAILER:", retailer)
         print("SKU:", sku)
+        print("MODEL:", model)
+        print("STORAGE:", storage)
+        print("COLOR:", color)
         print("URL:", url)
 
-        if key_counts[key] > 1:
+        # Prevent duplicate active SKUs
+
+        if (
+            not all(key)
+            or key_counts[key] > 1
+        ):
 
             skipped += 1
 
-            message = "DUPLICATE_ACTIVE_SKU"
+            message = (
+                "DUPLICATE_OR_INVALID_SKU"
+            )
 
             print("SKIPPED:", message)
 
-            log_rows.append([
-                now(),
-                retailer,
-                url,
-                message
-            ])
+            log_records.append({
+                "timestamp": now(),
+                "retailer": retailer,
+                "sku": sku,
+                "url": url,
+                "status": "SKIPPED",
+                "message": message
+            })
 
             if key in current:
 
@@ -646,84 +1180,135 @@ def main():
 
         try:
 
-            # Read current and original prices.
-
-            price, stock, original_price = (
-                read_price(product)
+            check_url(
+                retailer,
+                url
             )
 
-            # First observed historical price.
+            # ==================================
+            # READ CURRENT AND ORIGINAL PRICE
+            # ==================================
+
+            result = read_price(
+                product
+            )
+
+            # Compatible with both V3 and V4
+            # price_reader.py return values.
+
+            if not isinstance(result, (tuple, list)):
+
+                raise ValueError(
+                    "INVALID_PRICE_READER_RESULT"
+                )
+
+            if len(result) == 3:
+
+                price, stock, original_price = result
+
+            elif len(result) == 2:
+
+                price, stock = result
+
+                original_price = None
+
+            else:
+
+                raise ValueError(
+                    "INVALID_PRICE_READER_RESULT"
+                )
+
+            price = normalize_price(
+                price
+            )
+
+            original_price = normalize_price(
+                original_price
+            )
+
+            if not price:
+
+                raise ValueError(
+                    "INVALID_CURRENT_PRICE"
+                )
+
+            if (
+                original_price
+                and original_price < price
+            ):
+
+                original_price = None
+
+            # ==================================
+            # PRESERVE BASELINE
+            # ==================================
 
             baseline = baselines.setdefault(
                 key,
                 price
             )
 
-            # Actual historical discount.
-
-            discount = round(
-                (baseline - price)
-                / baseline * 100,
-                2
-            )
-
-            # Advertised discount.
-
-            advertised_discount = ""
-            saving_amount = ""
-
-            if (
-                original_price
-                and original_price >= price
-            ):
-
-                saving_amount = (
-                    original_price - price
-                )
-
-                advertised_discount = round(
-                    saving_amount
-                    / original_price * 100,
-                    2
-                )
-
-            # Save all 14 columns.
-
-            row = [
-                now(),
-                retailer,
-                sku,
-                product["model"],
-                product["storage"],
-                product["color"],
-                price,
-                baseline,
-                discount,
-                stock,
-                url,
-                original_price or "",
+            (
+                historical_discount,
                 advertised_discount,
                 saving_amount
-            ]
-
-            current[key] = dict(
-                zip(HEADERS, row)
+            ) = calculate_discounts(
+                price,
+                original_price,
+                baseline
             )
 
-            history_rows.append(row)
+            # ==================================
+            # CREATE PRICE RECORD
+            # ==================================
 
-            log_rows.append([
-                now(),
-                retailer,
-                url,
-                "OK"
-            ])
+            record = {
+                "timestamp": now(),
+                "retailer": retailer,
+                "sku": sku,
+                "model": model,
+                "storage": storage,
+                "color": color,
+                "price": price,
+                "baseline_price": baseline,
+                "discount_pct": historical_discount,
+                "stock": str(stock or "UNKNOWN"),
+                "url": url,
+                "original_price": original_price or "",
+                "advertised_discount_pct": advertised_discount,
+                "saving_amount": saving_amount
+            }
+
+            # Preserve additional current fields.
+
+            current[key] = {
+                **current.get(key, {}),
+                **record
+            }
+
+            history_records.append(
+                record
+            )
+
+            log_records.append({
+                "timestamp": now(),
+                "retailer": retailer,
+                "sku": sku,
+                "url": url,
+                "status": "OK",
+                "message": "PRICE_UPDATED"
+            })
 
             success += 1
 
             print(
                 f"OK: {retailer} | "
                 f"{sku} | {price:,}"
+            )
+
+            print(
+                "CURRENT PRICE:",
+                price
             )
 
             print(
@@ -743,116 +1328,182 @@ def main():
 
             print(
                 "HISTORICAL DISCOUNT:",
-                discount
+                historical_discount
+            )
+
+            print(
+                "SAVING AMOUNT:",
+                saving_amount
             )
 
         except Exception as error:
 
             failed += 1
 
-            message = str(error)[:300]
-
-            log_rows.append([
-                now(),
-                retailer,
-                url,
-                f"ERROR: {message}"
-            ])
-
-            # Preserve old price on failure.
-
-            if key in current:
-
-                current[key]["stock"] = "STALE"
+            message = str(error)[:500]
 
             print(
                 f"ERROR: {retailer} | "
                 f"{sku} | {message}"
             )
 
+            log_records.append({
+                "timestamp": now(),
+                "retailer": retailer,
+                "sku": sku,
+                "url": url,
+                "status": f"ERROR: {message}",
+                "message": message
+            })
+
+            # Keep last known price and timestamp.
+
+            if key in current:
+
+                current[key]["stock"] = "STALE"
+
         time.sleep(3)
 
     # ======================================
-    # SAVE PRICE HISTORY
+    # SAVE GOOGLE SHEETS
     # ======================================
 
-    if history_rows:
+    print("=" * 50)
+    print("SAVING GOOGLE SHEETS")
 
-        history_ws.append_rows(
-            history_rows,
-            value_input_option="RAW"
-        )
-
-        print(
-            "HISTORY ROWS SAVED:",
-            len(history_rows)
-        )
-
-    # ======================================
-    # SAVE CRAWL LOG
-    # ======================================
-
-    if log_rows:
-
-        log_ws.append_rows(
-            log_rows,
-            value_input_option="RAW"
-        )
-
-    # ======================================
-    # UPDATE CURRENT PRICE
-    # ======================================
-
-    current_rows = [
-        [
-            row.get(field, "")
-            for field in HEADERS
-        ]
-        for key, row in sorted(
-            current.items()
-        )
-        if key in active_keys
-    ]
-
-    values = [HEADERS] + current_rows
-
-    extra = max(
-        0,
-        len(old_current) - len(current_rows)
+    append_records(
+        history_ws,
+        history_records,
+        history_headers
     )
 
-    values += [
-        [""] * len(HEADERS)
-        for _ in range(extra)
-    ]
-
-    if len(values) > current_ws.row_count:
-
-        current_ws.add_rows(
-            len(values)
-            - current_ws.row_count
-        )
-
-    current_ws.update(
-        range_name="A1",
-        values=values,
-        value_input_option="RAW"
+    append_records(
+        log_ws,
+        log_records,
+        log_headers
     )
+
+    # Mark inactive products without deleting
+    # their last recorded prices.
+
+    active_keys = set(key_counts)
+
+    for key in current:
+
+        if key not in active_keys:
+
+            current[key]["stock"] = "INACTIVE"
+
+    save_current_price(
+        current_ws,
+        current,
+        current_headers,
+        len(old_current)
+    )
+
+    # ======================================
+    # FORMAT PRICE COLUMNS
+    # ======================================
+
+    for ws, headers in [
+        (current_ws, current_headers),
+        (history_ws, history_headers)
+    ]:
+
+        try:
+
+            formats = []
+
+            for field in [
+                "price",
+                "baseline_price",
+                "original_price",
+                "saving_amount"
+            ]:
+
+                if field in headers:
+
+                    col_index = (
+                        headers.index(field) + 1
+                    )
+
+                    column = gspread.utils.rowcol_to_a1(
+                        1,
+                        col_index
+                    )[:-1]
+
+                    formats.append({
+                        "range": f"{column}2:{column}",
+                        "format": {
+                            "numberFormat": {
+                                "type": "NUMBER",
+                                "pattern": '#,##0" đ"'
+                            }
+                        }
+                    })
+
+            for field in [
+                "discount_pct",
+                "advertised_discount_pct"
+            ]:
+
+                if field in headers:
+
+                    col_index = (
+                        headers.index(field) + 1
+                    )
+
+                    column = gspread.utils.rowcol_to_a1(
+                        1,
+                        col_index
+                    )[:-1]
+
+                    formats.append({
+                        "range": f"{column}2:{column}",
+                        "format": {
+                            "numberFormat": {
+                                "type": "NUMBER",
+                                "pattern": '0.00"%"'
+                            }
+                        }
+                    })
+
+            if formats:
+
+                ws.batch_format(
+                    formats
+                )
+
+        except Exception as error:
+
+            print(
+                "FORMAT WARNING:",
+                str(error)
+            )
 
     # ======================================
     # FINAL RESULT
     # ======================================
 
-    print("==============================")
-    print(f"SUCCESS: {success}")
-    print(f"FAILED: {failed}")
-    print(f"SKIPPED: {skipped}")
-    print("==============================")
+    print("=" * 50)
+
+    print(
+        f"IPHONE PRICE TRACKER {VERSION}"
+    )
+
+    print("ACTIVE:", len(active_products))
+    print("SUCCESS:", success)
+    print("FAILED:", failed)
+    print("SKIPPED:", skipped)
+    print("FINISHED:", now())
+
+    print("=" * 50)
 
     if success == 0:
 
         raise RuntimeError(
             "No product prices collected. "
+            "Previous prices preserved. "
             "Check CRAWL_LOG."
         )
 
