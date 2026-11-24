@@ -1,4 +1,3 @@
-
 import argparse
 import csv
 import json
@@ -9,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 
-VERSION = "V5.4"
+VERSION = "V5.4.1"
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "local" / "test_data"
 
@@ -282,7 +281,9 @@ def write_google_sheets(records):
 
     existing = sheet.get_all_values()
 
-    if not existing:
+    if not any(str(cell).strip() for row in existing for cell in row):
+        if sheet.col_count < len(HEADERS):
+            sheet.add_cols(len(HEADERS) - sheet.col_count)
         sheet.update(
             range_name="A1",
             values=[HEADERS]
