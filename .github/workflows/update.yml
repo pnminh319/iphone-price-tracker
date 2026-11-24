@@ -1,5 +1,5 @@
 
-name: Update iPhone Prices V2
+name: Update iPhone Prices V3
 
 on:
   workflow_dispatch:
@@ -8,7 +8,9 @@ on:
     - cron: '17 */3 * * *'
 
 permissions:
-  contents: read
+  contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: iphone-price-update
@@ -42,4 +44,26 @@ jobs:
         run: python crawler/discover.py
 
       - name: Update iPhone prices
+        continue-on-error: true
         run: python crawler/main.py
+
+      - name: Export Dashboard data
+        run: python crawler/export_dashboard.py
+
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: crawl
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy Dashboard
+        id: deployment
+        uses: actions/deploy-pages@v4
