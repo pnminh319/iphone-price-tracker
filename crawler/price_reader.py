@@ -11,6 +11,60 @@ from main import (
 )
 
 
+ORIGINAL_PRICE_SELECTORS = {
+    "CPS": [
+        ".product__price--through"
+    ],
+    "HHM": [],
+    "DDV": [],
+    "TGDD": [],
+    "FPT": [],
+    "VTS": []
+}
+
+
+def read_original_price(soup, retailer, price):
+    candidates = set()
+
+    selectors = ORIGINAL_PRICE_SELECTORS.get(
+        retailer, []
+    )
+
+    for selector in selectors:
+        for element in soup.select(selector):
+            text = element.get_text(
+                " ", strip=True
+            )
+
+            print(
+                "ORIGINAL PRICE CANDIDATE:",
+                selector, text
+            )
+
+            if not re.fullmatch(
+                r"\s*[\d.,\s]+(?:đ|₫|VND)?\s*",
+                text,
+                re.I
+            ):
+                continue
+
+            digits = re.sub(r"\D", "", text)
+
+            if not digits:
+                continue
+
+            value = int(digits)
+
+            if price <= value <= 100000000:
+                candidates.add(value)
+
+    if len(candidates) == 1:
+        return candidates.pop()
+
+    print("ORIGINAL_PRICE_NOT_VERIFIED")
+
+    return None
+
 def read_price(product):
     retailer = str(
         product["retailer"]
