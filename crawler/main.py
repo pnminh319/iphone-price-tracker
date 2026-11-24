@@ -356,7 +356,8 @@ def main():
         active_keys.add(key)
 
         try:
-            price, stock = crawl_product(product)
+            from price_reader import read_price
+            price, stock = read_price(product)
 
             baseline = baselines.setdefault(
                 key, price
