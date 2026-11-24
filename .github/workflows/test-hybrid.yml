@@ -1,0 +1,364 @@
+
+name: Test Hybrid Crawler V5
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-hybrid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: |
+          pip install requests beautifulsoup4 playwright
+
+      - name: Install Chromium
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Test 6 retailers
+        run: |
+          python -u - <<'PY'
+          import requests
+          import json
+          import time
+
+          from bs4 import BeautifulSoup
+          from urllib.parse import urlparse, urljoin
+          from urllib.robotparser import RobotFileParser
+          from playwright.sync_api import sync_playwright
+
+          AGENT = "iPhonePriceTracker/1.0"
+
+          WEBSITES = {
+              "TGDD": "https://www.thegioididong.com/dtdd-apple-iphone",
+              "FPT": "https://fptshop.com.vn/dien-thoai/apple-iphone",
+              "CPS": "https://cellphones.com.vn/mobile/apple.html",
+              "HHM": "https://hoanghamobile.com/dien-thoai-di-dong/iphone",
+              "DDV": "https://didongviet.vn/dien-thoai-iphone.html",
+              "VTS": "https://viettelstore.vn/ket-qua-tim-kiem.html?keyword=iphone&sort=SearchResult"
+          }
+
+          session = requests.Session()
+
+          session.headers.update({
+              "User-Agent": AGENT,
+              "Accept-Language": "vi-VN,vi;q=0.9"
+          })
+
+          def inspect(html, url):
+
+              soup = BeautifulSoup(html, "html.parser")
+
+              title = (
+                  soup.title.get_text(strip=True)
+                  if soup.title else ""
+              )
+
+              links = set()
+              domain = urlparse(url).hostname
+
+              for a in soup.select("a[href]"):
+
+                  href = urljoin(url, a["href"])
+                  parsed = urlparse(href)
+
+                  if parsed.hostname != domain:
+                      continue
+
+                  if "iphone" not in parsed.path.lower():
+                      continue
+
+                  links.add(href.split("#")[0])
+
+              price_nodes = soup.select(
+                  '[itemprop="price"], '
+                  '.price, .price-current, '
+                  '.product-price, .sale-price'
+              )
+
+              old_price_nodes = soup.select(
+                  'del, s, strike, '
+                  '.old-price, .price-old, '
+                  '.box-price-through, '
+                  '.product__price--through'
+              )
+
+              result = {
+                  "title": title,
+                  "html_size": len(html),
+                  "iphone_links": len(links),
+                  "price_candidates": len(price_nodes),
+                  "old_price_candidates": len(old_price_nodes),
+                  "sample_links": sorted(links)[:5]
+              }
+
+              print("TITLE:", title)
+              print("HTML_SIZE:", len(html))
+              print("IPHONE_LINKS:", len(links))
+              print("PRICE_CANDIDATES:", len(price_nodes))
+              print("OLD_PRICE_CANDIDATES:", len(old_price_nodes))
+
+              for link in result["sample_links"]:
+                  print("SAMPLE:", link)
+
+              return result
+
+          def check_robots(url):
+
+              parsed = urlparse(url)
+
+              robots_url = (
+                  f"{parsed.scheme}://"
+                  f"{parsed.netloc}/robots.txt"
+              )
+
+              response = session.get(
+                  robots_url,
+                  timeout=(10, 20),
+                  allow_redirects=False
+              )
+
+              print("ROBOTS_HTTP:", response.status_code)
+
+              if response.status_code in (404, 410):
+                  return True
+
+              if response.status_code != 200:
+                  return False
+
+              parser = RobotFileParser()
+              parser.parse(response.text.splitlines())
+
+              return parser.can_fetch(AGENT, url)
+
+          def test(code, url, browser):
+
+              result = {
+                  "retailer": code,
+                  "url": url,
+                  "method": None,
+                  "status": "FAILED"
+              }
+
+              print("=" * 60)
+              print("RETAILER:", code)
+              print("URL:", url)
+
+              try:
+
+                  if not check_robots(url):
+
+                      result["status"] = "ROBOTS_BLOCKED_OR_UNAVAILABLE"
+                      return result
+
+                  print("--- REQUESTS ---")
+
+                  response = session.get(
+                      url,
+                      timeout=(15, 30),
+                      allow_redirects=False
+                  )
+
+                  print("HTTP:", response.status_code)
+
+                  result["http"] = response.status_code
+
+                  if response.status_code != 200:
+
+                      result["status"] = (
+                          f"HTTP_{response.status_code}"
+                      )
+
+                      return result
+
+                  html = response.text
+
+                  blocked = [
+                      "verify you are human",
+                      "access denied",
+                      "captcha challenge"
+                  ]
+
+                  if any(x in html.lower() for x in blocked):
+
+                      result["status"] = "ACCESS_RESTRICTED"
+                      return result
+
+                  data = inspect(html, url)
+
+                  result["requests"] = data
+
+                  if (
+                      data["iphone_links"] >= 5
+                      and data["price_candidates"] > 0
+                  ):
+
+                      result["method"] = "REQUESTS"
+                      result["status"] = "CANDIDATES_FOUND"
+
+                      return result
+
+                  print("--- PLAYWRIGHT ---")
+
+                  context = browser.new_context(
+                      locale="vi-VN",
+                      timezone_id="Asia/Ho_Chi_Minh",
+                      user_agent=AGENT
+                  )
+
+                  def guard(route):
+                      request = route.request
+
+                      if (
+                          request.is_navigation_request()
+                          and request.url != url
+                      ):
+                          route.abort()
+                      else:
+                          route.continue_()
+
+                  context.route("**/*", guard)
+
+                  page = context.new_page()
+
+                  try:
+
+                      response = page.goto(
+                          url,
+                          wait_until="domcontentloaded",
+                          timeout=45000
+                      )
+
+                      if response:
+
+                          print(
+                              "PLAYWRIGHT_HTTP:",
+                              response.status
+                          )
+
+                          if response.status != 200:
+
+                              result["status"] = (
+                                  f"HTTP_{response.status}"
+                              )
+
+                              return result
+
+                      page.wait_for_timeout(5000)
+
+                      html = page.content()
+
+                      if any(
+                          x in html.lower()
+                          for x in blocked
+                      ):
+
+                          result["status"] = "ACCESS_RESTRICTED"
+                          return result
+
+                      data = inspect(html, url)
+
+                      result["playwright"] = data
+
+                      if (
+                          data["iphone_links"] >= 5
+                          and data["price_candidates"] > 0
+                      ):
+
+                          result["method"] = "PLAYWRIGHT"
+                          result["status"] = "CANDIDATES_FOUND"
+
+                      else:
+
+                          result["status"] = "SELECTORS_NEED_REVIEW"
+
+                  finally:
+
+                      context.close()
+
+              except Exception as e:
+
+                  result["error"] = str(e)[:500]
+
+                  print("ERROR:", result["error"])
+
+              return result
+
+          results = []
+
+          with sync_playwright() as p:
+
+              browser = p.chromium.launch(
+                  headless=True
+              )
+
+              try:
+
+                  for code, url in WEBSITES.items():
+
+                      result = test(code, url, browser)
+
+                      results.append(result)
+
+                      print("RESULT:", result["status"])
+
+                      time.sleep(3)
+
+              finally:
+
+                  browser.close()
+
+          print("=" * 60)
+          print("HYBRID CRAWLER V5 SUMMARY")
+          print("=" * 60)
+
+          success = 0
+
+          for result in results:
+
+              print(
+                  result["retailer"],
+                  "|",
+                  result["status"],
+                  "|",
+                  result["method"]
+              )
+
+              if result["status"] == "CANDIDATES_FOUND":
+                  success += 1
+
+          print("CANDIDATES FOUND:", success, "/ 6")
+
+          with open(
+              "retailer-test.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  results,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          PY
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retailer-test-v5
+          path: retailer-test.json
+          retention-days: 3
