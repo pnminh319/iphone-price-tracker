@@ -1,5 +1,1322 @@
-<!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>iPhone Price Tracker</title><style>body{font:15px system-ui;background:#f4f6fa;color:#172033;margin:0}main{max-width:1200px;margin:auto;padding:20px}h1{margin-bottom:4px}section{background:white;border:1px solid #dde3eb;border-radius:14px;padding:16px;margin:16px 0}.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}input,select,button{font:inherit;padding:10px;border:1px solid #ccd4df;border-radius:8px;min-width:0}button{cursor:pointer;background:#172033;color:white}table{border-collapse:collapse;width:100%;white-space:nowrap}td,th{text-align:left;padding:12px;border-bottom:1px solid #eee}.scroll{overflow:auto}.best{background:#e5f7e9}.muted{color:#687487}a{color:#245ac5}svg{width:100%;height:auto} .stats{display:flex;gap:24px;flex-wrap:wrap}</style><main><h1>iPhone Price Tracker</h1><div class="muted">BLACK FRIDAY · So sánh giá mua iPhone</div><section><div id="status">Đang tải dữ liệu…</div><div class="stats" id="stats"></div></section><section><div class="filters"><input id="q" placeholder="Tìm iPhone"><select id="model"></select><select id="storage"></select><select id="color"></select><select id="retailer"></select><select id="sort"><option value="asc">Giá tăng dần</option><option value="desc">Giá giảm dần</option></select><button id="reload">Làm mới</button><button id="csv">Xuất CSV (Excel)</button></div></section><section class="scroll"><table><thead><tr><th>Sản phẩm</th><th>Màu</th><th>Nhà bán lẻ</th><th>Giá</th><th>Giảm từ giá đầu</th><th>Trạng thái</th><th>Cập nhật</th><th>Lịch sử</th></tr></thead><tbody id="rows"></tbody></table></section><section><h2>Lịch sử giá</h2><select id="historyMode"><option value="hour">Theo lần cập nhật</option><option value="day">Theo ngày (giá cuối ngày)</option></select><div id="history">Chọn Lịch sử tại một sản phẩm.</div></section><p class="muted">Màu UNKNOWN không được xếp hạng giá thấp nhất. Giá tham chiếu là giá ghi nhận đầu tiên, không mặc định là giá trước Black Friday. Giá cần đối chiếu với nhà bán lẻ.</p></main><script>
-const $=id=>document.getElementById(id), shops={CPS:'CellphoneS',HHM:'Hoàng Hà Mobile',DDV:'Di Động Việt',TGDD:'Thế Giới Di Động',FPT:'FPT Shop',VTS:'Viettel Store'}, money=n=>Number(n).toLocaleString('vi-VN')+' ₫';let current=[],history=[],shown=[],selected=null;const fields=['timestamp','retailer','sku','model','storage','color','price','baseline_price','discount_pct','stock','url'];const key=r=>[r.retailer,r.sku,r.url].join('|');const fresh=r=>r.stock==='InStock'&&Date.now()-Date.parse(r.timestamp)<6*3600000;const known=r=>r.color&&r.color.toUpperCase()!=='UNKNOWN';const group=r=>[r.model,r.storage,r.color].map(x=>String(x).trim().toLowerCase()).join('|');function cell(tr,value){let td=tr.insertCell();td.textContent=value??'';return td}function options(id,values,label){let el=$(id),old=el.value;el.replaceChildren(new Option(label,''),...values.map(v=>new Option(id==='retailer'?shops[v]||v:v,v)));if(values.includes(old))el.value=old}function render(){shown=current.filter(r=>[r.model,r.sku,r.storage,r.color,shops[r.retailer]].join(' ').toLowerCase().includes($('q').value.toLowerCase())&&['model','storage','color','retailer'].every(k=>!$(k).value||$(k).value===r[k])).sort((a,b)=>($('sort').value==='asc'?1:-1)*(a.price-b.price));let mins={};for(let r of current)if(fresh(r)&&known(r))mins[group(r)]=Math.min(mins[group(r)]??Infinity,r.price);$('rows').replaceChildren();for(let r of shown){let tr=$('rows').insertRow();if(fresh(r)&&known(r)&&r.price===mins[group(r)])tr.className='best';let td=cell(tr,'');let a=document.createElement('a');a.textContent=r.model+' '+r.storage;try{let u=new URL(r.url);if(u.protocol==='https:'){a.href=u.href;a.target='_blank';a.rel='noopener noreferrer'}}catch{}td.append(a);cell(tr,r.color);cell(tr,shops[r.retailer]||r.retailer);cell(tr,money(r.price));cell(tr,r.baseline_price>0?((r.baseline_price-r.price)/r.baseline_price*100).toFixed(2)+'%':'—');cell(tr,fresh(r)?'Còn hàng':r.stock==='InStock'?'Giá cũ':r.stock);cell(tr,new Date(r.timestamp).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'}));let b=document.createElement('button');b.textContent='Xem';b.onclick=()=>{selected=r;draw()};cell(tr,'').append(b)}$('stats').textContent=`${shown.length} kết quả / ${current.length} giá ghi nhận · ${new Set(current.map(r=>r.retailer)).size}/6 nhà bán lẻ`}
-function draw(){if(!selected)return;let data=history.filter(r=>key(r)===key(selected)).sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));if($('historyMode').value==='day'){let m=new Map();for(let r of data)m.set(new Date(r.timestamp).toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'}),r);data=[...m.values()]}let el=$('history');el.replaceChildren();let h=document.createElement('p');h.textContent=selected.model+' '+selected.storage+' · '+(shops[selected.retailer]||selected.retailer);el.append(h);if(!data.length){el.append('Chưa có lịch sử');return}let prices=data.map(r=>r.price),lo=Math.min(...prices),hi=Math.max(...prices),ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 640 220');let points=data.map((r,i)=>[40+i*560/Math.max(1,data.length-1),180-(r.price-lo)*140/Math.max(1,hi-lo)]);let line=document.createElementNS(ns,'polyline');line.setAttribute('points',points.map(p=>p.join(',')).join(' '));line.setAttribute('fill','none');line.setAttribute('stroke','#2563eb');line.setAttribute('stroke-width','3');svg.append(line);points.forEach(p=>{let c=document.createElementNS(ns,'circle');c.setAttribute('cx',p[0]);c.setAttribute('cy',p[1]);c.setAttribute('r',3);c.setAttribute('fill','#2563eb');svg.append(c)});el.append(svg,`Thấp nhất: ${money(lo)} · Cao nhất: ${money(hi)} · ${data.length} mốc giá`);let t=document.createElement('table');for(let r of data.slice(-30).reverse()){let tr=t.insertRow();cell(tr,r.timestamp);cell(tr,money(r.price))}el.append(t)}
-async function load(){try{let res=await fetch('data.json?t='+Date.now());if(!res.ok)throw Error('HTTP '+res.status);let d=await res.json();current=d.current.filter(r=>Number(r.price)>0);history=d.history.filter(r=>Number(r.price)>0);$('status').textContent='Xuất dữ liệu: '+new Date(d.exported_at).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'});for(let k of ['model','storage','color','retailer'])options(k,[...new Set(current.map(r=>r[k]).filter(Boolean))].sort(),{model:'Tất cả model',storage:'Dung lượng',color:'Màu sắc',retailer:'Nhà bán lẻ'}[k]);render();draw()}catch(e){$('status').textContent='Chưa tải được data.json: '+e.message}}for(let k of ['q','model','storage','color','retailer','sort'])$(k).addEventListener('input',render);$('historyMode').onchange=draw;$('reload').onclick=load;$('csv').onclick=()=>{let quote=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';let csv=[fields.join(','),...shown.map(r=>fields.map(k=>quote(r[k])).join(','))].join('\r\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='iphone-prices.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};load();setInterval(load,300000);
-</script></html>
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1">
+
+<title>iPhone Price Tracker V5.3</title>
+
+<style>
+
+:root {
+    color-scheme: dark;
+    --bg: #0b1120;
+    --panel: #151e2f;
+    --border: #29364a;
+    --text: #edf2f7;
+    --muted: #94a3b8;
+    --green: #4ade80;
+    --blue: #60a5fa;
+    --red: #fb7185;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+}
+
+main {
+    max-width: 1600px;
+    margin: auto;
+    padding: 24px;
+}
+
+h1 {
+    margin: 0 0 8px;
+    font-size: 30px;
+}
+
+h2 {
+    font-size: 19px;
+    margin-top: 0;
+}
+
+p {
+    line-height: 1.6;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    margin-top: 18px;
+}
+
+.stats {
+    display: grid;
+    grid-template-columns:
+        repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+.stat {
+    padding: 18px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+.stat strong {
+    display: block;
+    font-size: 25px;
+    margin-top: 8px;
+}
+
+.filters {
+    display: grid;
+    grid-template-columns:
+        repeat(auto-fit, minmax(165px, 1fr));
+    gap: 12px;
+}
+
+label {
+    display: block;
+    color: var(--muted);
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+
+input, select, button {
+    width: 100%;
+    padding: 11px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+}
+
+button {
+    cursor: pointer;
+}
+
+button:hover {
+    border-color: var(--blue);
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+}
+
+.actions button {
+    width: auto;
+}
+
+.scroll {
+    overflow-x: auto;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    white-space: nowrap;
+}
+
+th, td {
+    text-align: left;
+    padding: 13px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+th {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+td {
+    font-variant-numeric: tabular-nums;
+}
+
+a {
+    color: var(--blue);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+.green {
+    color: var(--green);
+}
+
+.red {
+    color: var(--red);
+}
+
+.best {
+    background: rgba(34, 197, 94, 0.09);
+}
+
+.old {
+    color: var(--muted);
+    text-decoration: line-through;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.score {
+    font-weight: 700;
+    color: var(--green);
+}
+
+.history-chart {
+    width: 100%;
+    max-height: 320px;
+}
+
+.small {
+    font-size: 12px;
+}
+
+@media (max-width: 600px) {
+
+    main {
+        padding: 12px;
+    }
+
+    h1 {
+        font-size: 24px;
+    }
+
+    .panel {
+        padding: 12px;
+    }
+
+}
+
+</style>
+</head>
+
+<body>
+
+<main>
+
+<header>
+    <h1>iPhone Price Tracker</h1>
+    <p class="muted">
+        BLACK FRIDAY · 6 đại lý · Hybrid V5.3
+    </p>
+    <p id="status" class="muted">
+        Đang tải dữ liệu...
+    </p>
+</header>
+
+<div class="stats">
+
+    <div class="stat">
+        <span class="muted">Đại lý có giá mới</span>
+        <strong id="shopCount">—</strong>
+    </div>
+
+    <div class="stat">
+        <span class="muted">Giá còn hàng</span>
+        <strong id="productCount">—</strong>
+    </div>
+
+    <div class="stat">
+        <span class="muted">Giá thấp nhất</span>
+        <strong id="lowestPrice">—</strong>
+    </div>
+
+    <div class="stat">
+        <span class="muted">Giảm từ giá đầu</span>
+        <strong id="bestDiscount">—</strong>
+    </div>
+
+</div>
+
+<section class="panel">
+
+<h2>Bộ lọc sản phẩm</h2>
+
+<div class="filters">
+
+    <div>
+        <label for="search">Tìm kiếm</label>
+        <input id="search"
+               placeholder="iPhone 17 Pro Max...">
+    </div>
+
+    <div>
+        <label for="model">Model</label>
+        <select id="model"></select>
+    </div>
+
+    <div>
+        <label for="storage">Dung lượng</label>
+        <select id="storage"></select>
+    </div>
+
+    <div>
+        <label for="color">Màu sắc</label>
+        <select id="color"></select>
+    </div>
+
+    <div>
+        <label for="retailer">Đại lý</label>
+        <select id="retailer"></select>
+    </div>
+
+    <div>
+        <label for="segment">Phân khúc</label>
+        <select id="segment"></select>
+    </div>
+
+    <div>
+        <label for="budget">Ngân sách (triệu)</label>
+        <input id="budget"
+               type="number"
+               min="1"
+               step="0.5"
+               placeholder="Không giới hạn">
+    </div>
+
+    <div>
+        <label for="profile">Nhu cầu sử dụng</label>
+        <select id="profile">
+            <option value="balanced">Cân bằng</option>
+            <option value="gaming">Gaming</option>
+            <option value="camera">Camera</option>
+            <option value="longterm">Dùng lâu dài</option>
+        </select>
+    </div>
+
+    <div>
+        <label for="sort">Sắp xếp</label>
+        <select id="sort">
+            <option value="price-asc">Giá thấp nhất</option>
+            <option value="price-desc">Giá cao nhất</option>
+            <option value="value">Value Score</option>
+            <option value="ratio">Công năng / giá</option>
+            <option value="quality">Quality Score</option>
+            <option value="deal">Deal Score</option>
+            <option value="discount">Giảm từ giá đầu</option>
+            <option value="advertised">Giảm niêm yết</option>
+        </select>
+    </div>
+
+    <div>
+        <label for="availability">Tình trạng</label>
+        <select id="availability">
+            <option value="fresh">Còn hàng, giá mới</option>
+            <option value="all">Tất cả</option>
+        </select>
+    </div>
+
+    <div>
+        <label for="scope">Loại so sánh</label>
+        <select id="scope">
+            <option value="PRODUCT">Model + dung lượng</option>
+            <option value="COLOR">Theo màu sắc</option>
+            <option value="ALL">Tất cả bản ghi</option>
+        </select>
+    </div>
+
+</div>
+
+<div class="actions">
+
+    <button id="reload">Làm mới dữ liệu</button>
+    <button id="reset">Xóa bộ lọc</button>
+    <button id="export">Xuất CSV / Excel</button>
+
+</div>
+
+</section>
+
+<section class="panel">
+
+<h2>Bảng so sánh giá</h2>
+
+<p id="resultCount" class="muted"></p>
+
+<div class="scroll">
+
+<table>
+
+<thead>
+<tr>
+    <th>Sản phẩm</th>
+    <th>Màu</th>
+    <th>Đại lý</th>
+    <th>Giá hiện tại</th>
+    <th>Giảm từ giá đầu</th>
+    <th>Giảm niêm yết</th>
+    <th>Quality</th>
+    <th>Value</th>
+    <th>Deal</th>
+    <th>Trạng thái</th>
+    <th>Cập nhật</th>
+    <th>Lịch sử</th>
+</tr>
+</thead>
+
+<tbody id="rows"></tbody>
+
+</table>
+
+</div>
+
+</section>
+
+<section class="panel" id="historyPanel">
+
+<h2>Lịch sử giá</h2>
+
+<select id="historyMode">
+    <option value="hour">Theo lần cập nhật</option>
+    <option value="day">Giá cuối mỗi ngày</option>
+</select>
+
+<div id="history">
+    <p class="muted">
+        Chọn Lịch sử tại một sản phẩm.
+    </p>
+</div>
+
+</section>
+
+<section class="panel small muted">
+
+<h2>Phương pháp đánh giá</h2>
+
+<p>
+Quality Score là điểm công năng ước tính,
+không phải benchmark chính thức.
+Value Score là tỷ lệ công năng trên giá,
+chuẩn hóa theo phân khúc.
+Deal Score so sánh giá với trung vị của
+ít nhất hai đại lý có dữ liệu tương ứng.
+</p>
+
+<p>
+Giảm từ giá đầu được tính từ lần ghi nhận
+giá đầu tiên. Không mặc định đây là giá
+trước Black Friday. Giảm niêm yết được
+tính theo giá gốc hiển thị tại đại lý.
+</p>
+
+<p>
+Giá cũ hơn 12 giờ không được xếp hạng.
+Màu UNKNOWN là giá cấp sản phẩm,
+không phải một màu cụ thể.
+Giá có thể thay đổi theo khu vực,
+tồn kho và điều kiện khuyến mãi.
+</p>
+
+</section>
+
+</main>
+
+<script src="value.js"></script>
+
+<script>
+
+"use strict";
+
+const $ = id => document.getElementById(id);
+
+const V = window.iPhoneValue;
+
+const shops = {
+    TGDD: "Thế Giới Di Động",
+    FPT: "FPT Shop",
+    CPS: "CellphoneS",
+    HHM: "Hoàng Hà Mobile",
+    DDV: "Di Động Việt",
+    VTS: "Viettel Store"
+};
+
+let current = [];
+let history = [];
+let specs = {};
+let shown = [];
+let selected = null;
+
+const norm = value =>
+    String(value ?? "").trim().toLowerCase();
+
+const money = value =>
+    Number(value) > 0
+        ? Number(value).toLocaleString("vi-VN") + " ₫"
+        : "—";
+
+const percent = value =>
+    value != null &&
+    value !== "" &&
+    Number.isFinite(Number(value))
+        ? Number(value).toFixed(2) + "%"
+        : "—";
+
+const score = value =>
+    value == null
+        ? "—"
+        : Number(value).toFixed(1);
+
+const key = row =>
+    [row.retailer, row.sku]
+        .map(norm).join("|");
+
+const group = row =>
+    [row.model, row.storage, row.color]
+        .map(norm).join("|");
+
+const dateText = value => {
+
+    const date = new Date(value);
+
+    if (!Number.isFinite(date.getTime())) {
+        return "—";
+    }
+
+    return date.toLocaleString("vi-VN", {
+        timeZone: "Asia/Ho_Chi_Minh"
+    });
+
+};
+
+function cell(tr, value, className = "") {
+
+    const td = tr.insertCell();
+
+    td.textContent = value ?? "";
+
+    td.className = className;
+
+    return td;
+
+}
+
+function options(id, values, label) {
+
+    const element = $(id);
+
+    const previous = element.value;
+
+    element.replaceChildren(
+        new Option(label, ""),
+        ...values.map(value =>
+            new Option(
+                id === "retailer"
+                    ? shops[value] || value
+                    : value,
+                value
+            )
+        )
+    );
+
+    if (values.includes(previous)) {
+        element.value = previous;
+    }
+
+}
+
+function unique(values) {
+
+    return [...new Set(
+        values.filter(Boolean)
+    )].sort((a, b) =>
+        String(a).localeCompare(
+            String(b),
+            "vi",
+            {numeric: true}
+        )
+    );
+
+}
+
+function updateFilters() {
+
+    for (const field of [
+        "model",
+        "storage",
+        "color",
+        "retailer"
+    ]) {
+
+        options(
+            field,
+            unique(current.map(r => r[field])),
+            "Tất cả"
+        );
+
+    }
+
+    options(
+        "segment",
+        unique(current.map(
+            r => V.getSegment(r.price)
+        )),
+        "Tất cả phân khúc"
+    );
+
+}
+
+function getScope(row) {
+
+    return row.scope ||
+        (
+            norm(row.color) === "unknown"
+            || !row.color
+            ? "PRODUCT"
+            : "COLOR"
+        );
+
+}
+
+function stockLabel(row) {
+
+    if (V.isFresh(row)) {
+        return "Còn hàng";
+    }
+
+    const stock = norm(row.stock)
+        .replaceAll("_", "");
+
+    if (stock === "outofstock") {
+        return "Hết hàng";
+    }
+
+    if (stock === "instock") {
+        return "Giá cũ";
+    }
+
+    if (stock === "stale") {
+        return "Chưa cập nhật";
+    }
+
+    if (stock === "inactive") {
+        return "Ngừng theo dõi";
+    }
+
+    if (stock === "preorder") {
+        return "Đặt trước";
+    }
+
+    return row.stock || "Chưa xác định";
+
+}
+
+function updateStats() {
+
+    const fresh = current.filter(
+        row => V.isFresh(row)
+    );
+
+    $("shopCount").textContent =
+        new Set(
+            fresh.map(row => row.retailer)
+        ).size + "/6";
+
+    $("productCount").textContent =
+        fresh.length;
+
+    $("lowestPrice").textContent =
+        fresh.length
+        ? money(Math.min(
+            ...fresh.map(r => Number(r.price))
+        ))
+        : "—";
+
+    const discounts = fresh
+        .filter(r =>
+            Number(r.baseline_price) > 0
+        )
+        .map(r =>
+            (Number(r.baseline_price) -
+             Number(r.price)) /
+             Number(r.baseline_price) * 100
+        );
+
+    $("bestDiscount").textContent =
+        discounts.length
+        ? percent(Math.max(...discounts))
+        : "—";
+
+}
+
+function render() {
+
+    const budget =
+        Number($("budget").value) * 1000000
+        || Infinity;
+
+    const scope = $("scope").value;
+
+    const pool = current.filter(row =>
+        scope === "ALL" ||
+        getScope(row) === scope
+    );
+
+    const ranked = V.rankProducts(
+        pool,
+        specs,
+        {
+            profile: $("profile").value,
+            budget: budget
+        }
+    );
+
+    const rankedMap = new Map(
+        ranked.map(row => [key(row), row])
+    );
+
+    const query = norm($("search").value);
+
+    shown = pool.filter(row => {
+
+        if (
+            $("availability").value === "fresh"
+            && !V.isFresh(row)
+        ) return false;
+
+        if (
+            Number(row.price) > budget
+        ) return false;
+
+        if (
+            $("segment").value &&
+            V.getSegment(row.price) !==
+                $("segment").value
+        ) return false;
+
+        for (const field of [
+            "model",
+            "storage",
+            "color",
+            "retailer"
+        ]) {
+
+            if (
+                $(field).value &&
+                $(field).value !== row[field]
+            ) return false;
+
+        }
+
+        return norm([
+            row.model,
+            row.sku,
+            row.storage,
+            row.color,
+            shops[row.retailer]
+        ].join(" ")).includes(query);
+
+    }).map(row => ({
+
+        ...row,
+
+        ...(rankedMap.get(key(row)) || {})
+
+    }));
+
+    const sort = $("sort").value;
+
+    const scoreFields = {
+
+        value: "value_score",
+        ratio: "value_ratio",
+        quality: "quality_score",
+        deal: "deal_score",
+        discount: "discount_pct",
+        advertised: "advertised_discount_pct"
+
+    };
+
+    shown.sort((a, b) => {
+
+        if (sort === "price-asc") {
+            return (
+                (Number(a.price) || Infinity) -
+                (Number(b.price) || Infinity)
+            );
+        }
+
+        if (sort === "price-desc") {
+            return Number(b.price) - Number(a.price);
+        }
+
+        const field = scoreFields[sort];
+
+        const numeric = value =>
+            value == null || value === ""
+                ? -Infinity
+                : Number(value);
+
+        return (
+            numeric(b[field]) -
+            numeric(a[field])
+        );
+
+    });
+
+    const minimums = new Map();
+
+    const retailerGroups = new Map();
+
+    for (const row of pool) {
+
+        if (!V.isFresh(row)) continue;
+
+        const g = group(row);
+
+        minimums.set(
+            g,
+            Math.min(
+                minimums.get(g) ?? Infinity,
+                Number(row.price)
+            )
+        );
+
+        if (!retailerGroups.has(g)) {
+            retailerGroups.set(g, new Set());
+        }
+
+        retailerGroups.get(g).add(row.retailer);
+
+    }
+
+    $("rows").replaceChildren();
+
+    for (const row of shown) {
+
+        const tr = $("rows").insertRow();
+
+        if (
+            V.isFresh(row) &&
+            Number(row.price) ===
+                minimums.get(group(row)) &&
+            retailerGroups.get(group(row))?.size >= 2
+        ) {
+
+            tr.className = "best";
+
+        }
+
+        const productCell = cell(tr, "");
+
+        const link = document.createElement("a");
+
+        link.textContent =
+            row.model + " " + row.storage;
+
+        try {
+
+            const url = new URL(row.url);
+
+            if (url.protocol === "https:") {
+
+                link.href = url.href;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+
+            }
+
+        } catch {}
+
+        productCell.append(link);
+
+        cell(
+            tr,
+            norm(row.color) === "unknown"
+                ? "Không rõ màu"
+                : row.color
+        );
+
+        cell(
+            tr,
+            shops[row.retailer] ||
+            row.retailer
+        );
+
+        const priceCell = cell(
+            tr,
+            money(row.price)
+        );
+
+        if (
+            Number(row.original_price) >
+            Number(row.price) &&
+            Number(row.price) > 0
+        ) {
+
+            const old = document.createElement("div");
+
+            old.className = "old";
+
+            old.textContent = money(
+                row.original_price
+            );
+
+            priceCell.append(old);
+
+        }
+
+        cell(
+            tr,
+            percent(row.discount_pct),
+            Number(row.discount_pct) > 0
+                ? "green"
+                : ""
+        );
+
+        cell(
+            tr,
+            percent(row.advertised_discount_pct)
+        );
+
+        cell(tr, score(row.quality_score));
+
+        cell(
+            tr,
+            score(row.value_score),
+            "score"
+        );
+
+        cell(tr, score(row.deal_score));
+
+        cell(
+            tr,
+            stockLabel(row),
+            V.isFresh(row) ? "green" : "muted"
+        );
+
+        cell(
+            tr,
+            dateText(row.timestamp)
+        );
+
+        const button =
+            document.createElement("button");
+
+        button.textContent = "Xem";
+
+        button.onclick = () => {
+
+            selected = row;
+
+            drawHistory();
+
+            $("historyPanel").scrollIntoView({
+                behavior: "smooth"
+            });
+
+        };
+
+        cell(tr, "").append(button);
+
+    }
+
+    $("resultCount").textContent =
+        shown.length + " kết quả";
+
+    if (!shown.length) {
+
+        const tr = $("rows").insertRow();
+
+        const td = cell(
+            tr,
+            "Không tìm thấy sản phẩm phù hợp."
+        );
+
+        td.colSpan = 12;
+
+    }
+
+}
+
+function drawHistory() {
+
+    if (!selected) return;
+
+    let rows = history.filter(row =>
+        key(row) === key(selected) &&
+        Number(row.price) > 0 &&
+        Number.isFinite(
+            Date.parse(row.timestamp)
+        )
+    ).sort((a, b) =>
+        Date.parse(a.timestamp) -
+        Date.parse(b.timestamp)
+    );
+
+    if ($("historyMode").value === "day") {
+
+        const daily = new Map();
+
+        for (const row of rows) {
+
+            const day = new Date(
+                row.timestamp
+            ).toLocaleDateString("en-CA", {
+                timeZone: "Asia/Ho_Chi_Minh"
+            });
+
+            daily.set(day, row);
+
+        }
+
+        rows = [...daily.values()];
+
+    }
+
+    const container = $("history");
+
+    container.replaceChildren();
+
+    const heading = document.createElement("h3");
+
+    heading.textContent = [
+        selected.model,
+        selected.storage,
+        selected.color,
+        shops[selected.retailer]
+    ].join(" · ");
+
+    container.append(heading);
+
+    if (!rows.length) {
+
+        container.append("Chưa có lịch sử.");
+
+        return;
+
+    }
+
+    const prices = rows.map(
+        row => Number(row.price)
+    );
+
+    const low = Math.min(...prices);
+    const high = Math.max(...prices);
+
+    const ns = "http://www.w3.org/2000/svg";
+
+    const svg = document.createElementNS(
+        ns,
+        "svg"
+    );
+
+    svg.setAttribute("viewBox", "0 0 800 260");
+    svg.setAttribute("class", "history-chart");
+
+    const start = Date.parse(rows[0].timestamp);
+
+    const end = Date.parse(
+        rows[rows.length - 1].timestamp
+    );
+
+    const points = rows.map(row => [
+
+        45 + (
+            Date.parse(row.timestamp) - start
+        ) / Math.max(1, end - start) * 710,
+
+        215 - (
+            Number(row.price) - low
+        ) / Math.max(1, high - low) * 170
+
+    ]);
+
+    const line = document.createElementNS(
+        ns,
+        "polyline"
+    );
+
+    line.setAttribute(
+        "points",
+        points.map(p => p.join(",")).join(" ")
+    );
+
+    line.setAttribute("fill", "none");
+    line.setAttribute("stroke", "#60a5fa");
+    line.setAttribute("stroke-width", "3");
+
+    svg.append(line);
+
+    points.forEach((point, index) => {
+
+        const circle = document.createElementNS(
+            ns,
+            "circle"
+        );
+
+        circle.setAttribute("cx", point[0]);
+        circle.setAttribute("cy", point[1]);
+        circle.setAttribute("r", "4");
+        circle.setAttribute("fill", "#4ade80");
+
+        const title = document.createElementNS(
+            ns,
+            "title"
+        );
+
+        title.textContent =
+            dateText(rows[index].timestamp) +
+            " · " +
+            money(rows[index].price);
+
+        circle.append(title);
+
+        svg.append(circle);
+
+    });
+
+    container.append(svg);
+
+    const summary = document.createElement("p");
+
+    summary.textContent =
+        "Thấp nhất: " + money(low) +
+        " · Cao nhất: " + money(high) +
+        " · " + rows.length + " mốc giá";
+
+    container.append(summary);
+
+    const wrapper = document.createElement("div");
+
+    wrapper.className = "scroll";
+
+    const table = document.createElement("table");
+
+    for (const row of rows.slice(-30).reverse()) {
+
+        const tr = table.insertRow();
+
+        cell(tr, dateText(row.timestamp));
+        cell(tr, money(row.price));
+        cell(tr, percent(row.discount_pct));
+
+    }
+
+    wrapper.append(table);
+    container.append(wrapper);
+
+}
+
+function exportCSV() {
+
+    const fields = [
+
+        "timestamp",
+        "retailer",
+        "sku",
+        "model",
+        "storage",
+        "color",
+        "price",
+        "original_price",
+        "baseline_price",
+        "discount_pct",
+        "advertised_discount_pct",
+        "saving_amount",
+        "quality_score",
+        "value_score",
+        "value_ratio",
+        "deal_score",
+        "stock",
+        "url"
+
+    ];
+
+    function quote(value) {
+
+        let text = String(value ?? "");
+
+        if (
+            typeof value !== "number" &&
+            /^[\s]*[=+@-]/.test(text)
+        ) {
+            text = "'" + text;
+        }
+
+        return '"' +
+            text.replaceAll('"', '""') +
+            '"';
+
+    }
+
+    const csv = [
+
+        fields.join(","),
+
+        ...shown.map(row =>
+            fields.map(
+                field => quote(row[field])
+            ).join(",")
+        )
+
+    ].join("\r\n");
+
+    const blob = new Blob(
+        ["\ufeff", csv],
+        {type: "text/csv;charset=utf-8"}
+    );
+
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+
+    link.href = url;
+
+    link.download = "iphone-prices-v53.csv";
+
+    link.click();
+
+    setTimeout(
+        () => URL.revokeObjectURL(url),
+        1000
+    );
+
+}
+
+async function load() {
+
+    try {
+
+        $("status").textContent =
+            "Đang tải dữ liệu...";
+
+        const response = await fetch(
+            "data.json?t=" + Date.now(),
+            {cache: "no-store"}
+        );
+
+        if (!response.ok) {
+            throw Error("HTTP " + response.status);
+        }
+
+        const data = await response.json();
+
+        try {
+
+            const specsResponse = await fetch(
+                "specs.json",
+                {cache: "no-store"}
+            );
+
+            if (specsResponse.ok) {
+                specs = await specsResponse.json();
+            }
+
+        } catch {
+
+            specs = {};
+
+        }
+
+        current = Array.isArray(data.current)
+            ? data.current
+            : [];
+
+        history = Array.isArray(data.history)
+            ? data.history
+            : [];
+
+        $("status").textContent =
+            "Xuất dữ liệu: " +
+            dateText(data.exported_at) +
+            " · " +
+            (data.version || "V5.3");
+
+        updateFilters();
+        updateStats();
+        render();
+        drawHistory();
+
+    } catch (error) {
+
+        $("status").textContent =
+            "Không tải được dữ liệu: " +
+            error.message;
+
+    }
+
+}
+
+for (const id of [
+
+    "search",
+    "model",
+    "storage",
+    "color",
+    "retailer",
+    "segment",
+    "budget",
+    "profile",
+    "sort",
+    "availability",
+    "scope"
+
+]) {
+
+    $(id).addEventListener("input", render);
+
+}
+
+$("historyMode").onchange = drawHistory;
+
+$("reload").onclick = load;
+
+$("export").onclick = exportCSV;
+
+$("reset").onclick = () => {
+
+    for (const id of [
+        "search",
+        "model",
+        "storage",
+        "color",
+        "retailer",
+        "segment",
+        "budget"
+    ]) {
+        $(id).value = "";
+    }
+
+    $("profile").value = "balanced";
+    $("sort").value = "price-asc";
+    $("availability").value = "fresh";
+    $("scope").value = "PRODUCT";
+
+    render();
+
+};
+
+load();
+
+setInterval(load, 300000);
+
+</script>
+
+</body>
+</html>
