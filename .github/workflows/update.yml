@@ -1,6 +1,5 @@
 
-
-name: Update iPhone Prices
+name: Update iPhone Prices V2
 
 on:
   workflow_dispatch:
@@ -20,6 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -30,12 +33,14 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: Run iPhone crawler
-        env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
 
+      - name: Discover iPhone products
+        run: python crawler/discover.py
+
+      - name: Update iPhone prices
+        if: ${{ false }}
         run: python crawler/main.py
