@@ -1,7 +1,7 @@
 (function () {
     "use strict";
 
-    const VERSION = "V5.4.2.3";
+    const VERSION = "V5.4.2.4";
     const DAY = 86400000;
 
     const RETAILERS = [

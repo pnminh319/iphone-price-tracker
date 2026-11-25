@@ -510,6 +510,20 @@ def read_vts(soup):
 # TGDD / FPT
 # ========================================
 
+def read_sdk(soup):
+    root = soup.select_one('.product-essential .overview:has(.box-product-price-wrapper)')
+    if root is None:
+        return None, "UNKNOWN", None
+    price = unique_price(root, '.box-product-price-wrapper .price-flex .product-price')
+    original = unique_price(root, '.box-product-price-wrapper .price-flex .old-product-price')
+    def visible(node):
+        return not any('d-none' in p.get('class', []) or p.has_attr('hidden') or 'display:none' in p.get('style', '').replace(' ', '').lower() for p in [node, *node.parents])
+    buy = any(visible(b) and not b.has_attr('disabled') for b in root.select('.first-add-to-cart button.once-submit-button'))
+    unavailable = any(visible(b) for b in root.select('.add-to-cart-subscriber button'))
+    stock = 'IN_STOCK' if buy and not unavailable else 'OUT_OF_STOCK' if unavailable and not buy else 'UNKNOWN'
+    return price, stock, original if price and original and original > price else None
+
+
 def read_generic(soup):
 
     price, stock = get_jsonld_price(soup)
@@ -525,7 +539,7 @@ READERS = {
     "HHM": read_hhm,
     "DDV": read_ddv,
     "VTS": read_vts,
-    "SDK": read_generic,
+    "SDK": read_sdk,
     "TGDD": read_generic,
     "FPT": read_generic
 }
@@ -599,6 +613,13 @@ def read_price(product):
         return None, "VARIANT_UNVERIFIED", None
 
     try:
+
+        if retailer == "SDK":
+            from backfill_history import identity
+            title = soup.select_one(".product-essential .overview:has(.box-product-price-wrapper) .product-name")
+            expected = identity(str(product.get("model", "")) + " " + str(product.get("storage", "")))
+            if not title or not expected or identity(title.get_text(" ", strip=True)) != expected:
+                return None, "VARIANT_UNVERIFIED", None
 
         price, stock, original = READERS[
             retailer

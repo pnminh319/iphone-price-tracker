@@ -90,7 +90,7 @@ EXCLUDE = re.compile(
 )
 
 URL_PATTERNS = {
-    "SDK": re.compile(r"^/(?:iphone-[^/]+|iphone\d[^/]*)(?:/)?$", re.I),
+    "SDK": re.compile(r"^/(?:(?:dien-thoai-)?iphone-[^/]+|iphone\d[^/]*)(?:/)?$", re.I),
     "CPS": re.compile(
         r"^/iphone-[^/]+\.html$",
         re.I
@@ -312,7 +312,7 @@ def extract_products(html, retailer, source):
 
     found = {}
 
-    for a in soup.select("a[href]"):
+    for a in soup.select(".product-title a[href]" if retailer == "SDK" else "a[href]"):
 
         href = a.get("href", "").strip()
 

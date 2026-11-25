@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 from backfill_history import identity, ROOT, DATA_DIR, parse_history, record_key, export_csv, write_google_sheets
 
-VERSION = 'V5.4.2.3'
+VERSION = 'V5.4.2.4'
 BASE = 'https://conenmua.vn'
 UA = 'iPhonePriceTracker/1.0'
 SHOPS = {'thế giới di động':'TGDD','cellphones':'CPS','viettel store':'VTS','fpt shop':'FPT','hoàng hà mobile':'HHM','di động việt':'DDV','shopdunk':'SDK'}
@@ -23,7 +23,7 @@ def discover(html, model, targets):
         ident = identity(a.get_text(' ',strip=True))
         if not ident or ident[0]!=model:
             rejected['identity'] += 1; continue
-        if re.search(BAD,text.lower()) or 'chính hãng' not in text.lower():
+        if re.search(BAD,text.lower()):
             rejected['condition'] += 1
             print('SKIP CONDITION', a.get_text(' ',strip=True), '|', text[:300]); continue
         shops = [v for k,v in SHOPS.items() if 'bán trên '+k in text.lower()]

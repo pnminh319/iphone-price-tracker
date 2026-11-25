@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 
-VERSION = "V5.4.2.3"
+VERSION = "V5.4.2.4"
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "local" / "test_data"
 

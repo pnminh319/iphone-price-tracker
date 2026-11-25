@@ -15,7 +15,7 @@ from main import (
 )
 
 
-VERSION = "V5.4.2.3"
+VERSION = "V5.4.2.4"
 HISTORY_DAYS = 90
 
 ROOT = Path(__file__).resolve().parent.parent
