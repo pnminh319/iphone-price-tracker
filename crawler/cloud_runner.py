@@ -1,4 +1,3 @@
-
 import argparse
 import sys
 
@@ -11,7 +10,8 @@ CLOUD_RETAILERS = {
     "CPS",
     "HHM",
     "DDV",
-    "VTS"
+    "VTS",
+    "SDK"
 }
 
 

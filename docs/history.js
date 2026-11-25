@@ -1,12 +1,12 @@
 (function () {
     "use strict";
 
-    const VERSION = "V5.4.1";
+    const VERSION = "V5.4.2.3";
     const DAY = 86400000;
 
     const RETAILERS = [
         "TGDD", "FPT", "CPS",
-        "HHM", "DDV", "VTS"
+        "HHM", "DDV", "VTS", "SDK"
     ];
 
     const PERIODS = [7, 14, 30, 60, 90];

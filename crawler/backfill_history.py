@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 
-VERSION = "V5.4.1"
+VERSION = "V5.4.2.3"
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "local" / "test_data"
 
@@ -71,6 +71,21 @@ def parse_price(value):
     return price
 
 
+def identity(text):
+    text = re.sub(r"[-–—]", " ", str(text).lower())
+    if re.search(r"\b(?:cũ|likenew|like new|đổi trả|trưng bày|quốc tế|lock|refurbished|99%|98%|95%)\b", text):
+        return None
+    model = re.search(r"\biphone\s*(\d{1,2}e?|air|duo|se)(?:\s+(pro\s+max|pro|plus|mini|air|duo))?\b", text)
+    sizes = re.findall(r"\b(64|128|256|512|1024|2048|1|2)\s*(gb|tb)\b", text)
+    if not model or not sizes:
+        return None
+    normalized = {('1TB' if n=='1024' and u=='gb' else '2TB' if n=='2048' and u=='gb' else n+u.upper()) for n,u in sizes if (u=='gb' and n not in ('1','2')) or (u=='tb' and n in ('1','2'))}
+    if len(normalized)!=1:
+        return None
+    name = 'iphone '+model.group(1)+((' '+model.group(2)) if model.group(2) else '')
+    return re.sub(r"\s+", " ", name), normalized.pop()
+
+
 def parse_history(retailer, config, days):
     path = DATA_DIR / config["file"]
 
@@ -106,12 +121,13 @@ def parse_history(retailer, config, days):
 
     title = heading.get_text(" ", strip=True)
 
-    if not re.search(
-        r"\biPhone\s+16\s+128\s*GB\b",
-        title,
-        re.I
-    ):
-        raise ValueError("Product title mismatch")
+    expected_identity = identity(config.get("model", "iphone 16") + " " + config.get("storage", "128GB"))
+    actual_identity = identity(title)
+    if not expected_identity or actual_identity != expected_identity:
+        raise ValueError(f"Product title mismatch: expected={expected_identity!r}; actual={actual_identity!r}; title={title!r}")
+    model, storage = expected_identity
+    model = "iPhone " + model[7:].title()
+    sku = model.upper().replace(" ", "-") + "-" + storage + "-UNKNOWN"
 
     today = datetime.now(TZ).date()
     cutoff = today - timedelta(days=days - 1)
@@ -178,9 +194,9 @@ def parse_history(retailer, config, days):
             records.append({
                 "timestamp": day.isoformat(),
                 "retailer": retailer,
-                "sku": "IPHONE-16-128GB-UNKNOWN",
-                "model": "iPhone 16",
-                "storage": "128GB",
+                "sku": sku,
+                "model": model,
+                "storage": storage,
                 "color": "UNKNOWN",
                 "price": price,
                 "original_price": original,

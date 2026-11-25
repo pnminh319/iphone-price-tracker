@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -26,7 +25,8 @@ DOMAINS = {
     "CPS": "cellphones.com.vn",
     "HHM": "hoanghamobile.com",
     "DDV": "didongviet.vn",
-    "VTS": "viettelstore.vn"
+    "VTS": "viettelstore.vn",
+    "SDK": "shopdunk.com"
 }
 
 HEADERS = [

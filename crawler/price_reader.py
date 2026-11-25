@@ -1,4 +1,3 @@
-
 import json
 import re
 import time
@@ -27,6 +26,7 @@ RETAILER_DOMAINS = {
     "HHM": "hoanghamobile.com",
     "DDV": "didongviet.vn",
     "VTS": "viettelstore.vn",
+    "SDK": "shopdunk.com",
     "TGDD": "thegioididong.com",
     "FPT": "fptshop.com.vn"
 }
@@ -525,6 +525,7 @@ READERS = {
     "HHM": read_hhm,
     "DDV": read_ddv,
     "VTS": read_vts,
+    "SDK": read_generic,
     "TGDD": read_generic,
     "FPT": read_generic
 }

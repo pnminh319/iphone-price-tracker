@@ -6,7 +6,7 @@
 <meta name="viewport"
       content="width=device-width, initial-scale=1">
 
-<title>iPhone Price Tracker V5.4.1</title>
+<title>iPhone Price Tracker V5.4.2.3</title>
 
 <style>
 
@@ -219,15 +219,28 @@ a:hover {
 
 <main>
 
-<header>
+<header style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start">
+<div>
     <h1>iPhone Price Tracker</h1>
     <p class="muted">
-        BLACK FRIDAY · 6 đại lý · Hybrid V5.4.1
+        BLACK FRIDAY · 7 đại lý · Hybrid V5.4.2.3
     </p>
     <p id="status" class="muted">
         Đang tải dữ liệu...
     </p>
-</header>
+</div><div style="text-align:right;margin-left:auto"><div class="muted">CRAWL TIẾP THEO (DỰ KIẾN)</div><strong id="crawlCountdown" style="font-size:26px;color:#22c55e;font-variant-numeric:tabular-nums">--:--:--</strong><div id="crawlNext" class="muted"></div><small class="muted">Lịch cloud · có thể chạy trễ</small></div></header>
+<script>
+(function(){
+ function tick(){
+   const now=Date.now(), period=10800000, offset=900000;
+   const next=(Math.floor((now-offset)/period)+1)*period+offset;
+   const seconds=Math.ceil((next-now)/1000);
+   document.getElementById('crawlCountdown').textContent=[Math.floor(seconds/3600),Math.floor(seconds/60)%60,seconds%60].map(x=>String(x).padStart(2,'0')).join(':');
+   document.getElementById('crawlNext').textContent=new Intl.DateTimeFormat('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit',hourCycle:'h23'}).format(next)+' GMT+7';
+ }
+ tick();setInterval(tick,1000);
+})();
+</script>
 
 <div class="stats">
 
@@ -453,7 +466,8 @@ const shops = {
     CPS: "CellphoneS",
     HHM: "Hoàng Hà Mobile",
     DDV: "Di Động Việt",
-    VTS: "Viettel Store"
+    VTS: "Viettel Store",
+    SDK: "ShopDunk"
 };
 
 let current = [];
@@ -635,7 +649,7 @@ function updateStats() {
     $("shopCount").textContent =
         new Set(
             fresh.map(row => row.retailer)
-        ).size + "/6";
+        ).size + "/7";
 
     $("productCount").textContent =
         fresh.length;
@@ -970,7 +984,7 @@ function drawHistory() {
     const cov = H.coverage(raw, days);
     add("p", `Có dữ liệu ${cov.observed_days} ngày trong cửa sổ ${days} ngày (gộp các đại lý). Chế độ ngày có thể gồm giá tham khảo bên thứ ba (chấm rỗng, chưa rõ tồn kho). Ngày thiếu dữ liệu không được nội suy.`).className = "muted";
     if (!rows.length) { add("p", "Chưa có lịch sử phù hợp."); return; }
-    const colors = ["#facc15", "#fb923c", "#fb7185", "#60a5fa", "#c084fc", "#2dd4bf"];
+    const colors = ["#facc15", "#fb923c", "#fb7185", "#60a5fa", "#c084fc", "#2dd4bf", "#a3e635"];
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
     svg.setAttribute("viewBox", "0 0 900 310");

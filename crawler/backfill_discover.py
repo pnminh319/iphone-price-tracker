@@ -5,20 +5,14 @@ from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
-from backfill_history import ROOT, DATA_DIR, parse_history, record_key, export_csv, write_google_sheets
+from backfill_history import identity, ROOT, DATA_DIR, parse_history, record_key, export_csv, write_google_sheets
 
-VERSION = 'V5.4.2.2'
+VERSION = 'V5.4.2.3'
 BASE = 'https://conenmua.vn'
 UA = 'iPhonePriceTracker/1.0'
-SHOPS = {'thế giới di động':'TGDD','cellphones':'CPS','viettel store':'VTS','fpt shop':'FPT','hoàng hà mobile':'HHM','di động việt':'DDV'}
+SHOPS = {'thế giới di động':'TGDD','cellphones':'CPS','viettel store':'VTS','fpt shop':'FPT','hoàng hà mobile':'HHM','di động việt':'DDV','shopdunk':'SDK'}
 MODEL = r'iphone\s+(?:\d{1,2}(?:e|\s+(?:pro max|pro|plus|mini|air|duo))?|air|se(?:\s+\d{4})?)'
 BAD = r'\b(?:cũ|likenew|like new|đổi trả|thu cũ|trưng bày|quốc tế|lock|refurbished|99%|98%|95%)\b'
-
-def identity(text):
-    m = re.search(r'\b('+MODEL+r')\s+(\d+)\s*(gb|tb)\b', text.lower())
-    if not m or re.search(BAD,text.lower()): return None
-    model, n, unit = m.groups()
-    return model, ('1TB' if n=='1024' and unit=='gb' else '2TB' if n=='2048' and unit=='gb' else n+unit.upper())
 
 def discover(html, model, targets):
     soup = BeautifulSoup(html,'html.parser')
@@ -78,9 +72,7 @@ def main():
         (DATA_DIR / ('listing_'+model.replace(' ','-')+'.html')).write_text(html,encoding='utf-8')
         print('LISTING:',url,'SIZE:',len(html),'TITLE:',BeautifulSoup(html,'html.parser').title)
         rows=discover(html,model,targets); candidates.extend(rows); print('DISCOVERED',model,len(rows))
-    # Keep one representative source ID per retailer/model/storage; do not merge unknown colors.
-    groups={}
-    for c in sorted(candidates,key=lambda c:int(c['id'])): groups.setdefault((c['retailer'],c['model'],c['storage']),c)
+    groups={c['id']:c for c in candidates}
     selected=list(groups.values())[:a.limit]; records=[]
     for c in selected:
         html=fetch.get(c['url'])

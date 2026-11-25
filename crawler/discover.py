@@ -1,4 +1,3 @@
-
 import re
 import time
 import requests
@@ -91,6 +90,7 @@ EXCLUDE = re.compile(
 )
 
 URL_PATTERNS = {
+    "SDK": re.compile(r"^/(?:iphone-[^/]+|iphone\d[^/]*)(?:/)?$", re.I),
     "CPS": re.compile(
         r"^/iphone-[^/]+\.html$",
         re.I
