@@ -358,6 +358,7 @@ a:hover {
 
 <div class="actions">
 
+    <button id="moversToggle" aria-expanded="false">🔥 Biến động giá 24H</button>
     <button id="reload">Làm mới dữ liệu</button>
     <button id="reset">Xóa bộ lọc</button>
     <button id="export">Xuất CSV / Excel</button>
@@ -368,6 +369,12 @@ a:hover {
 
 <section class="panel">
 
+<div id="moversPanel" hidden>
+<h2>Biến động giá 24 giờ qua</h2>
+<p class="muted">So sánh giá hiện tại với lần ghi nhận gần nhất tại hoặc trước mốc 24 giờ (tối đa lệch 4 giờ). Chỉ tính cùng đại lý, SKU, URL và phạm vi màu; cả hai mốc còn hàng. Giá hiện tại không quá 4 giờ.</p>
+<div class="filters"><div><label for="moversMode">Xu hướng</label><select id="moversMode"><option value="all">Tất cả</option><option value="down">Giảm giá</option><option value="up">Tăng giá</option></select></div><div><label for="moversSort">Xếp hạng theo</label><select id="moversSort"><option value="money">Số tiền</option><option value="pct">Phần trăm</option></select></div></div>
+<p id="moversCount" class="muted"></p><div class="scroll"><table><thead><tr><th>iPhone</th><th>Đại lý</th><th>Giá trước</th><th>Giá hiện tại</th><th>Thay đổi</th><th>%</th><th>Mốc trước</th><th>Mốc hiện tại</th></tr></thead><tbody id="moversRows"></tbody></table></div>
+</div>
 <h2>Bảng so sánh giá</h2>
 
 <p id="resultCount" class="muted"></p>
@@ -452,6 +459,7 @@ tồn kho và điều kiện khuyến mãi.
 
 <script src="value.js"></script>
 <script src="history.js"></script>
+<script src="movers.js"></script>
 
 <script>
 
@@ -1115,6 +1123,23 @@ function exportCSV() {
 
 }
 
+function drawMovers(){
+ if ($("moversPanel").hidden) return;
+ const body=$("moversRows");body.replaceChildren();
+ if(!window.iPhoneMovers){$("moversCount").textContent="Thiếu movers.js";return;}
+ const mode=$("moversMode").value, sort=$("moversSort").value;
+ const rows=window.iPhoneMovers.rank(current,history).filter(x=>mode==="all"||(mode==="down"?x.delta<0:x.delta>0));
+ if(sort==="pct")rows.sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct));
+ $("moversCount").textContent=rows.length?`Hiển thị ${Math.min(30,rows.length)}/${rows.length} biến động đủ dữ liệu`:"Chưa có biến động đủ dữ liệu để so sánh 24 giờ.";
+ for(const x of rows.slice(0,30)){
+ const tr=document.createElement("tr"),r=x.row, sign=x.delta<0?"−":"+";
+ cell(tr,[r.model,r.storage,r.color].join(" · "));cell(tr,shops[r.retailer]||r.retailer);cell(tr,money(x.old));cell(tr,money(x.price));
+ cell(tr,sign+money(Math.abs(x.delta))).style.color=x.delta<0?"#16a34a":"#dc2626";
+ cell(tr,sign+Math.abs(x.pct).toFixed(2)+"%");cell(tr,dateText(x.base.timestamp));cell(tr,dateText(r.timestamp));body.append(tr);
+ }
+}
+$("moversToggle").onclick=()=>{const p=$("moversPanel");p.hidden=!p.hidden;$("moversToggle").setAttribute("aria-expanded",String(!p.hidden));drawMovers();if(!p.hidden)p.scrollIntoView({behavior:"smooth"});};
+$("moversMode").onchange=drawMovers;$("moversSort").onchange=drawMovers;
 async function load() {
 
     try {
@@ -1168,6 +1193,7 @@ async function load() {
         updateStats();
         render();
         drawHistory();
+        drawMovers();
 
     } catch (error) {
 
