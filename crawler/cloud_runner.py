@@ -4,14 +4,14 @@ import sys
 import main as core
 
 
-VERSION = "V5.3"
+VERSION = "V5.4.3"
 
 CLOUD_RETAILERS = {
     "CPS",
     "HHM",
     "DDV",
     "VTS",
-    "SDK"
+    "SDK", "PV", "MTM", "TZ", "H24"
 }
 
 

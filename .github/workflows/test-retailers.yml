@@ -1,5 +1,4 @@
-
-name: Test 6 iPhone Retailers
+name: Test 11 iPhone Retailers
 
 on:
   workflow_dispatch:
@@ -21,7 +20,7 @@ jobs:
       - name: Install libraries
         run: pip install requests beautifulsoup4
 
-      - name: Test all 6 retailers
+      - name: Test all 11 retailers
         run: |
           python - <<'PY'
           import requests
@@ -36,7 +35,12 @@ jobs:
               "CPS": "https://cellphones.com.vn/mobile/apple.html",
               "HHM": "https://hoanghamobile.com/dien-thoai-di-dong/iphone",
               "DDV": "https://didongviet.vn/dien-thoai-iphone.html",
-              "VTS": "https://viettelstore.vn/ket-qua-tim-kiem.html?keyword=iphone&sort=SearchResult"
+              "VTS": "https://viettelstore.vn/ket-qua-tim-kiem.html?keyword=iphone&sort=SearchResult",
+              "SDK": "https://shopdunk.com/iphone",
+              "PV": "https://phongvu.vn/c/iphone",
+              "MTM": "https://minhtuanmobile.com/dien-thoai/iphone/",
+              "TZ": "https://www.topzone.vn/iphone",
+              "H24": "https://24hstore.vn/apple-iphone"
           }
 
           agent = "iPhonePriceTracker/1.0"
@@ -133,7 +137,7 @@ jobs:
                   success += int(ok)
 
           print("=" * 50)
-          print(f"CONNECTED: {success}/6")
-          print(f"UNAVAILABLE: {6-success}/6")
+          print(f"CONNECTED: {success}/{len(websites)}")
+          print(f"UNAVAILABLE: {len(websites)-success}/{len(websites)}")
           print("=" * 50)
           PY

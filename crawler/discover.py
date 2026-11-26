@@ -25,7 +25,7 @@ from main import (
 from price_reader import read_price
 
 
-VERSION = "V5.1"
+VERSION = "V5.4.3"
 
 AUTO_ACTIVATE = True
 
@@ -90,6 +90,10 @@ EXCLUDE = re.compile(
 )
 
 URL_PATTERNS = {
+    "PV": re.compile(r"^/iphone-[^/]+--[ps]\d+/?$", re.I),
+    "MTM": re.compile(r"^/iphone-[^/]+/?$", re.I),
+    "TZ": re.compile(r"^/iphone/iphone-[^/]+/?$", re.I),
+    "H24": re.compile(r"^/iphone-[^/]+/iphone-[^/]+-p\d+/?$", re.I),
     "SDK": re.compile(r"^/(?:(?:dien-thoai-)?iphone-[^/]+|iphone\d[^/]*)(?:/)?$", re.I),
     "CPS": re.compile(
         r"^/iphone-[^/]+\.html$",
@@ -180,7 +184,7 @@ def normalize_url(url):
     return urlunparse((
         parsed.scheme.lower(),
         parsed.netloc.lower(),
-        parsed.path.rstrip("/"),
+        parsed.path if parsed.hostname == "minhtuanmobile.com" else parsed.path.rstrip("/"),
         "",
         urlencode(sorted(params)),
         ""
@@ -210,7 +214,7 @@ def valid_product_url(retailer, url):
 
     path = parsed.path
 
-    if EXCLUDE.search(path):
+    if EXCLUDE.search(path) or (retailer in {"PV","MTM","TZ","H24"} and re.search(r"(?:^|[-/])(?:cu|lock|likenew|combo|quoc-te|trung-bay)(?:[-/]|$)", path, re.I)):
         return False
 
     pattern = URL_PATTERNS.get(retailer)
@@ -244,6 +248,9 @@ def parse_product(text, url, retailer):
         or STORAGE_PATTERN.search(text)
     )
 
+    if retailer == "TZ" and not storage_match:
+        # Listing may omit capacity; only use explicit single capacity.
+        return None
     if not model_match or not storage_match:
         return None
 
@@ -312,7 +319,7 @@ def extract_products(html, retailer, source):
 
     found = {}
 
-    for a in soup.select(".product-title a[href]" if retailer == "SDK" else "a[href]"):
+    for a in soup.select({"SDK":".product-title a[href]", "MTM":".probox a[href]"}.get(retailer,"a[href]")):
 
         href = a.get("href", "").strip()
 
@@ -552,7 +559,7 @@ def discover(browser, retailer, source):
     # VTS already returned HTTP 403
     # during browser testing.
 
-    if retailer == "VTS":
+    if retailer in {"VTS","PV","MTM","TZ","H24"}:
 
         return products, "REQUESTS"
 
@@ -728,6 +735,7 @@ def main():
         if row.get("url")
     }
 
+    existing_keys = {(str(r.get("retailer", "")).upper(), str(r.get("sku", ""))) for r in old}
     new_rows = []
     log_rows = []
 
@@ -783,6 +791,9 @@ def main():
 
                         product_url = product[5]
 
+                        new_key = (retailer, product[0])
+                        if retailer in {"PV","MTM","TZ","H24"} and new_key in existing_keys:
+                            continue
                         if product_url in existing_urls:
                             continue
 
@@ -823,6 +834,10 @@ def main():
                             pending += 1
                             total_pending += 1
 
+                        if retailer in {"PV","MTM","TZ","H24"}:
+                            if not verified:
+                                continue
+                            existing_keys.add(new_key)
                         new_rows.append(product)
 
                         existing_urls.add(

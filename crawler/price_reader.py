@@ -27,6 +27,7 @@ RETAILER_DOMAINS = {
     "DDV": "didongviet.vn",
     "VTS": "viettelstore.vn",
     "SDK": "shopdunk.com",
+    "PV": "phongvu.vn", "MTM": "minhtuanmobile.com", "TZ": "topzone.vn", "H24": "24hstore.vn",
     "TGDD": "thegioididong.com",
     "FPT": "fptshop.com.vn"
 }
@@ -534,7 +535,23 @@ def read_generic(soup):
     return price, stock, None
 
 
+def read_new(soup, retailer):
+    selectors = {
+        "PV": (".css-1v2ddkd", None, "button.css-jbfqts"),
+        "MTM": (".prodetail__price--buynow b.price", ".prodetail__price--buynow s", ".btn-pdetail-muangay"),
+        "TZ": ("strong.price.box_normal", None, ".btn-buy.full"),
+        "H24": (".sticky_price_current", ".sticky_price_old", ".sticky_btn_buy"),
+    }
+    current, old, buy = selectors[retailer]
+    price = unique_price(soup, current)
+    original = unique_price(soup, old) if old else None
+    def visible(node):
+        return not any(p.has_attr('hidden') or p.has_attr('disabled') or p.get('aria-disabled') == 'true' or set(p.get('class', [])) & {'hidden','d-none','disabled'} or 'display:none' in p.get('style','').replace(' ','').lower() for p in [node,*node.parents])
+    stock = 'IN_STOCK' if any(visible(n) and 'mua ngay' in n.get_text(' ',strip=True).lower() for n in soup.select(buy)) else 'UNKNOWN'
+    return price, stock, original if price and original and original > price else None
+
 READERS = {
+    **{r: (lambda soup, r=r: read_new(soup,r)) for r in ('PV','MTM','TZ','H24')},
     "CPS": read_cps,
     "HHM": read_hhm,
     "DDV": read_ddv,
@@ -614,6 +631,12 @@ def read_price(product):
 
     try:
 
+        if retailer in {"PV","MTM","TZ","H24"}:
+            from backfill_history import identity
+            title = soup.select_one('h1')
+            expected = identity(str(product.get('model',''))+' '+str(product.get('storage','')))
+            if not title or not expected or identity(title.get_text(' ',strip=True)) != expected:
+                return None, "VARIANT_UNVERIFIED", None
         if retailer == "SDK":
             from backfill_history import identity
             title = soup.select_one(".product-essential .overview:has(.box-product-price-wrapper) .product-name")

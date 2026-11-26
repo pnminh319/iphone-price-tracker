@@ -15,7 +15,7 @@ from main import (
 )
 
 
-VERSION = "V5.4.2.4"
+VERSION = "V5.4.3"
 HISTORY_DAYS = 90
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -233,7 +233,7 @@ def read_backfill(book):
         row = normalize_row(raw)
         if not all(row.get(k) for k in ("sku", "model", "storage", "price")):
             continue
-        if row["retailer"] not in {"TGDD", "FPT", "CPS", "HHM", "DDV", "VTS", "SDK"}:
+        if row["retailer"] not in {"TGDD", "FPT", "CPS", "HHM", "DDV", "VTS", "SDK", "PV", "MTM", "TZ", "H24"}:
             continue
         row["stock"] = "UNKNOWN"
         row["scope"] = "PRODUCT"

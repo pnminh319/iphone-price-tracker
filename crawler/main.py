@@ -26,7 +26,8 @@ DOMAINS = {
     "HHM": "hoanghamobile.com",
     "DDV": "didongviet.vn",
     "VTS": "viettelstore.vn",
-    "SDK": "shopdunk.com"
+    "SDK": "shopdunk.com",
+    "PV": "phongvu.vn", "MTM": "minhtuanmobile.com", "TZ": "topzone.vn", "H24": "24hstore.vn"
 }
 
 HEADERS = [
